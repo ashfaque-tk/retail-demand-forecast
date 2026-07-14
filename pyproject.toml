@@ -5,6 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "fastapi>=0.139.0",
+    "fastparquet>=2026.5.0",
     "ipykernel>=7.2.0",
     "lightgbm>=4.6.0",
     "matplotlib>=3.10.8",
@@ -13,4 +15,5 @@ dependencies = [
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
     "statsmodels>=0.14.6",
+    "uvicorn>=0.51.0",
 ]
