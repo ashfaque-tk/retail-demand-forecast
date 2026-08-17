@@ -1,5 +1,8 @@
 from fastapi import FastAPI, HTTPException
+import os 
 from pydantic import BaseModel
+from datetime import date
+import psycopg2
 import joblib
 import pandas as pd
 from src.pipeline import get_known_future_features, recursive_forecast
@@ -14,8 +17,20 @@ models = {
 cat_categories = joblib.load('models/cat_categories_ca1.pkl')
 feature_cols = joblib.load('models/feature_cols_ca1.pkl')
 recent_history = pd.read_parquet('models/recent_history_ca1.parquet')
-calendar_df = pd.read_csv('data/m5-forecasting-accuracy/calendar.csv', parse_dates=['date'])
-price_df = pd.read_csv('data/m5-forecasting-accuracy/sell_prices.csv')
+calendar_df = pd.read_csv('data/raw/calendar.csv', parse_dates=['date'])
+price_df = pd.read_csv('data/raw/sell_prices.csv')
+
+db_conn = psycopg2.connect(os.environ['DATABASE_URL'])
+db_conn.autocommit = True
+
+
+
+def log_predictions(item_id,store_id,results,prediction_made_date, model_version='v1'):
+    with db_conn.cursor() as cur:
+        for h,r in enumerate(results,start=1):
+            cur.execute(""" INSERT INTO predictions (item_id,store_id,target_date,prediction_made_date,horizon_days,model_version,sales_pred,q10,q90) 
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (item_id,store_id,r['date'].date(),prediction_made_date,h, model_version, float(r['sales_pred']),float(r['q10']),float(r['q90'])))
 
 
 class ForecastRequest(BaseModel):
@@ -47,6 +62,9 @@ def forecast_item(req: ForecastRequest):
     future_static = get_known_future_features(req.item_id, future_dates, calendar_df, item_price, item_meta)
 
     results = recursive_forecast(models, item_history, future_static, feature_cols, cat_categories)
+
+    log_predictions(req.item_id, 'CA_1', results, date.today())
+
     return {'item_id': req.item_id, 'forecast': [
         {'date': str(r['date'].date()), 'sales_pred': r['sales_pred'], 'q10': r['q10'], 'q90': r['q90']}
         for r in results
