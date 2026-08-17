@@ -9,3 +9,17 @@ data/
 # Virtual environments
 .venv
 data/
+
+# --- ML Models & Artifacts ---
+*.pkl
+*.joblib
+models/
+
+# --- Logs & Temporary Files ---
+*.log
+CACHED
+exporting
+resolving
+transferring
+writing
+naming
