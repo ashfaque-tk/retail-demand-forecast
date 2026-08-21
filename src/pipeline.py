@@ -49,7 +49,7 @@ def recursive_forecast_batch(
     lags: List[int] = [1, 2, 3, 7, 14, 21],
     rolling_mean_windows: List[int] = [3, 7, 14, 21, 28, 60, 90],
     rolling_max_windows: List[int] = [2, 3, 7, 14, 21, 28, 60, 90],
-    id_col: str = 'item_id'
+    id_col: str = 'item_id', max_lookback_days:int=100
 ):
     '''Robust vectorized recursive forecasting loop across all items.'''
 
@@ -58,13 +58,13 @@ def recursive_forecast_batch(
     features_list = []
 
     # Keep a generous lookback buffer for max rolling windows (e.g., 120 days)
-    max_lookback_days = 120
+    
     cutoff_date = history['date'].max() - pd.Timedelta(days=max_lookback_days)
     history_slice = history[history['date'] >= cutoff_date].copy()
 
     dates = sorted(future_static_df['date'].unique())
     get_features = GetLagRollFeatures()
-
+  
     for current_date in dates:
         # 1. Isolate static features for the current day
         day_static = future_static_df[future_static_df['date'] == current_date].copy()
@@ -88,21 +88,21 @@ def recursive_forecast_batch(
         
         # Optional advanced features (wrapped in try/except to prevent abrupt crashes)
         try:
-            history_slice = get_features.add_rolling_on_lag(history_slice, lags=[7], windows=[7, 28])
+            history_slice = get_features.add_rolling_on_lag(history_slice, lags=[28], windows=[7, 28])
         except Exception:
             pass
 
- 
         # 5. Extract today's calculated features
         today_feats = history_slice[history_slice['date'] == current_date]
 
         # 6. Merge static features with today's dynamic recursive features safely
         row = day_static.merge(today_feats, on=[id_col, 'date'], how='left', suffixes=('', '_dup'))
         row = row.loc[:, ~row.columns.duplicated()] # Drop duplicate columns if any
+    
         try:
             row= get_trend_features(row)
-        except Exception:
-            print("error: breaking")
+        except Exception as e:
+            print(e)
             break
             
         
@@ -152,6 +152,7 @@ def recursive_forecast_batch(
 
 def cost_per_item(df_test,preds):
     '''pred: must contain point forecast and quantile forecasts'''
+    
 
     item_data = df_test[['item_id','date','sell_price','sales']].copy()
 

@@ -28,7 +28,7 @@ warnings.filterwarnings('ignore')
 DATA_DIR = 'data/processed'
 MLFLOW_TRACKING_URI = os.environ.get('MLFLOW_TRACKING_URI', 'http://localhost:5001')
 
-CAT_COLS = ['item_id', 'dept_id', 'cat_id']
+CAT_COLS = ['item_id', 'dept_id', 'cat_id','event_type_1','event_type_2','event_name_1','event_name_2']
 FEATURE_COLS = [
     'lag_7', 'lag_14', 'lag_28', 'rolling_mean_7', 'rolling_mean_28',
     'day_of_week', 'day_of_month', 'week_of_year', 'month', 'year',
@@ -66,8 +66,11 @@ def build_eval_features(future, eval_days=28):
     eval_end = eval_start + pd.Timedelta(days=eval_days - 1)
     return future[(future['date'] >= eval_start) & (future['date'] <= eval_end)].copy()
 
+def train_models(train_df, test_df=None, quantiles=False, feature_cols=FEATURE_COLS, n_estimators=None):
 
-def train_models(train_df,test_df,quantiles = False, feature_cols=FEATURE_COLS):
+    if test_df is not None:
+        assert set(list(train_df.columns)) == set(list(test_df.columns)), \
+            'AssertionError: train_df and test_df should have same columns'
 
     train_df = train_df.dropna(subset=feature_cols).copy()
 
@@ -80,45 +83,51 @@ def train_models(train_df,test_df,quantiles = False, feature_cols=FEATURE_COLS):
     assert not train_df.empty, (
         'AssertionError: train_df is empty after dropping NaNs (check if your lookback window is too large)!'
     )
-    
+
     cat_categories = {}
     for col in CAT_COLS:
         cats = sorted(train_df[col].dropna().unique().tolist())
         train_df[col] = pd.Categorical(train_df[col], categories=cats)
         cat_categories[col] = cats
 
-
     X_train = train_df[feature_cols]
     y_train = train_df['sales']
 
-    X_val = test_df[feature_cols]
-    y_val = test_df['sales']
-    
     params = dict(n_estimators=800, learning_rate=0.05, num_leaves=31,
-                    subsample=0.8,  # row bagging
-                    colsample_bytree=0.7,  # feature bagging (prevents reliance on a single dominant feature)
+                    subsample=0.8,
+                    colsample_bytree=0.7,
                     min_child_samples=50,
                     verbose=-1)
 
+    # override fixed round count when doing a no-holdout final fit
+    if n_estimators is not None:
+        params['n_estimators'] = n_estimators
+
+    fit_kwargs = dict(categorical_feature=CAT_COLS)
+
+    if test_df is not None:
+        for col, cats in cat_categories.items():
+            test_df[col] = pd.Categorical(test_df[col], categories=cats)
+        X_val = test_df[feature_cols]
+        y_val = test_df['sales']
+        fit_kwargs['eval_set'] = [(X_val, y_val)]
+        fit_kwargs['callbacks'] = [lgb.early_stopping(50, verbose=False)]
+
     model_point = lgb.LGBMRegressor(objective='tweedie', **params)
-    model_point.fit(X_train, y_train, eval_set=[(X_val, y_val)],
-              callbacks=[lgb.early_stopping(50, verbose=False)],categorical_feature=CAT_COLS)   
-    
+    model_point.fit(X_train, y_train, **fit_kwargs)
+
     if quantiles:
         print("quantile models training.")
         model_q10 = lgb.LGBMRegressor(objective='quantile', alpha=0.1, **params)
-        model_q10.fit(X_train, y_train, eval_set=[(X_val, y_val)],
-                callbacks=[lgb.early_stopping(50, verbose=False)], categorical_feature=CAT_COLS)
+        model_q10.fit(X_train, y_train, **fit_kwargs)
 
         model_q90 = lgb.LGBMRegressor(objective='quantile', alpha=0.9, **params)
-        model_q90.fit(X_train, y_train, eval_set=[(X_val, y_val)],
-                callbacks=[lgb.early_stopping(50, verbose=False)], categorical_feature=CAT_COLS)
+        model_q90.fit(X_train, y_train, **fit_kwargs)
     else:
-        model_q10 = None 
-        model_q90 = None 
+        model_q10 = None
+        model_q90 = None
 
     return {'point': model_point, 'q10': model_q10, 'q90': model_q90}, cat_categories, params
-
 
 def predict_eval_set(models, train_df, eval_df, cat_categories):
     history = train_df[['item_id','date','sales']].copy()

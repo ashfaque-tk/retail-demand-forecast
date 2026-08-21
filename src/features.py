@@ -152,6 +152,7 @@ def get_trend_features(df, mean_col_7:str='rolling_mean_7', mean_col_28:str='rol
     
     cols = [mean_col_7,mean_col_28,historical_mean_col]
     missing_cols = [c for c in cols if c not in df.columns]
+    
     if missing_cols:
         raise ValueError(f"missing col: {missing_cols}")
 

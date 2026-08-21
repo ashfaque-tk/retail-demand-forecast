@@ -21,6 +21,80 @@ def split_data(df, start_date, end_date, forecast_horizon=28):
 
     return train_, test_
 
+def generate_rolling_windows(df, training_window=365, horizon=28, step_size=120, date_col='date'):
+    """
+    Generates a list of fixed-size rolling window date ranges for walk-forward validation.
+    """
+    min_date = df[date_col].min()
+    max_date = df[date_col].max()
+    
+    windows = []
+    window_id = 1
+    
+    current_train_start = min_date
+    
+    while True:
+        current_train_end = current_train_start + pd.Timedelta(days=int(training_window))
+        test_start = current_train_end
+        test_end = test_start + pd.Timedelta(days=int(horizon))
+        
+        # Stop generating windows if the test period extends beyond available data
+        if test_end > max_date:
+            break        
+        windows.append({
+            'window_id': f"window_{window_id}",
+            'train_start': current_train_start,
+            'train_end': current_train_end,
+            'test_start': test_start,
+            'test_end': test_end
+        })  
+        window_id += 1
+        current_train_start += pd.Timedelta(days=int(step_size))     
+    return windows
+
+
+def generate_expanding_windows(df, training_window=365, horizon=28, step_size=120, date_col='date'):
+    """
+    Generates a list of expanding window date ranges for walk-forward validation.
+    """
+    min_date = df[date_col].min()
+    max_date = df[date_col].max()
+    
+    windows = []
+    window_id = 1
+    
+    # Train start is fixed to the absolute beginning of dataset
+    train_start = min_date
+    current_train_end = min_date + pd.Timedelta(days=int(training_window))
+    
+    while True:
+        test_start = current_train_end
+        test_end = test_start + pd.Timedelta(days=int(horizon))
+        
+        # Stop generating windows if the test period extends beyond available data
+        if test_end > max_date:
+            break
+            
+        windows.append({
+            'window_id': f"window_{window_id}",
+            'train_start': train_start,
+            'train_end': current_train_end,
+            'test_start': test_start,
+            'test_end': test_end
+        })
+        
+        window_id += 1
+        current_train_end += pd.Timedelta(days=int(step_size))
+        
+    return windows
+
+
+
+
+
+
+
+
 def walk_forward_rolling_window(df,training_window=365,horizon=28):
 
     total_days_available = (df['date'].max()-df['date'].min()).days
