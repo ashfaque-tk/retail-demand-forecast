@@ -54,19 +54,61 @@ class GetLagRollFeatures:
         return df
     
 
-def get_known_future_features(item_id, dates, calendar_df, price_df, item_meta):
-    cal = calendar_df[calendar_df['date'].isin(dates)].copy()
-    cal['item_id'] = item_id
-    cal['dept_id'] = item_meta['dept_id']
-    cal['cat_id'] = item_meta['cat_id']
-    cal = cal.merge(price_df[['wm_yr_wk', 'sell_price']], on='wm_yr_wk', how='left')
-
-    # derive calendar features the same way the training notebook did
+def get_calendar_features(calendar_df,include_event_types=True):
+    cal = calendar_df.copy()
+    cal['date'] = pd.to_datetime(cal['date'])
+    # derive calendar features 
     cal['day_of_week']  = cal['date'].dt.dayofweek
     cal['day_of_month'] = cal['date'].dt.day
     cal['week_of_year'] = cal['date'].dt.isocalendar().week.astype(int)
-    cal['month'] = cal['date'].dt.month
-    cal['year']  = cal['date'].dt.year
+
+    # derive events 
+    # event_name_1, event_name_2, event_type_1, event_type_2
+
+    cal['is_event'] = (cal['event_name_1'].notna() | cal['event_name_2'].notna()).astype(int)
+    # all event_dates
+    event_dates = cal[cal["is_event"] == 1]["date"].drop_duplicates().sort_values()
+    max_event_lookahead = 7 # days
+    if event_dates.empty:
+        cal["days_to_next_event"] = max_event_lookahead
+        cal["days_since_last_event"] = max_event_lookahead
+        cal["is_event_in_7_days"] = 0
+        return cal
+
+    def get_days_to_next(current_date):
+        future_events = event_dates[event_dates >= current_date]
+        if future_events.empty:
+            return max_event_lookahead
+        diff = (future_events.iloc[0] - current_date).days
+        return min(diff, max_event_lookahead+1)
+    
+    # Calculate distance to nearest past event per row
+    def get_days_since_last(current_date):
+        past_events = event_dates[event_dates <= current_date]
+        if past_events.empty:
+            return max_event_lookahead
+        diff = (current_date - past_events.iloc[-1]).days
+        return min(diff, max_event_lookahead)
+    
+    cal["days_to_next_event"] = cal["date"].apply(get_days_to_next)
+    cal["days_since_last_event"] = cal["date"].apply(get_days_since_last)
+
+    # 3. Horizon Flag: Event coming up within 7 days?
+    cal["is_event_in_7_days"] = (cal["days_to_next_event"] <= 7).astype(int)
+
+    if include_event_types and "event_type_1" in cal.columns:
+        # Combine type 1 and type 2 to capture overlap
+        all_types = cal["event_type_1"].fillna("").astype(str) + " " + cal[
+            "event_type_2"
+        ].fillna("").astype(str)
+
+        # Create binary indicators for top macro categories
+        cal["is_sporting_event"] = all_types.str.contains("Sporting").astype(int)
+        cal["is_cultural_event"] = all_types.str.contains("Cultural").astype(int)
+        cal["is_national_event"] = all_types.str.contains("National").astype(int)
+        cal["is_religious_event"] = all_types.str.contains("Religious").astype(int)
+
+    # drop the sparse 
 
     return cal
 

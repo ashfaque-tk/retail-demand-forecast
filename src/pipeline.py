@@ -4,7 +4,7 @@ from typing import Dict, List
 
 import pandas as pd
 import numpy as np
-from .features import get_known_future_features, GetLagRollFeatures, get_trend_features
+from .features import GetLagRollFeatures, get_trend_features
 
 # def recursive_forecast(models, history, future_static, feature_cols, cat_categories, id_col='item_id'):
 #     """models: dict with 'point', 'q10', 'q90' fitted LGBMRegressors."""
@@ -150,7 +150,7 @@ def recursive_forecast_batch(
 
 
 
-def cost_per_item(df_test,preds):
+def cost_per_item(df_test,preds,safety_level='q90'):
     '''pred: must contain point forecast and quantile forecasts'''
     
 
@@ -163,12 +163,14 @@ def cost_per_item(df_test,preds):
     item_data['holding_cost'] = (0.25/365)*item_data['cost']
     item_data['stockout_cost'] = item_data['profit']
 
-    item_data['safety_stock'] = item_data['q90'] - item_data['sales_pred']
 
-    item_data['cost_holding'] = item_data['holding_cost']*item_data['safety_stock']
-    item_data['expected_shortage'] = (item_data['sales'] - item_data['q90']).clip(lower=0)
+    S = item_data[safety_level]
+    D = item_data['sales']
+    item_data['cost_holding']  = item_data['holding_cost'] * np.maximum(S - D, 0)   # realized leftover
+    item_data['stockout_cost'] = item_data['stockout_cost'] * np.maximum(D - S, 0)  # realized shortfall (unchanged)
 
-    item_data['stockout_cost'] = item_data['stockout_cost']*item_data['expected_shortage']
+
     item_data['total_cost'] = item_data['cost_holding']  + item_data['stockout_cost']
 
     return item_data.groupby('item_id')['total_cost'].sum().reset_index()
+

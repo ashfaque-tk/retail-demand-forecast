@@ -89,12 +89,6 @@ def generate_expanding_windows(df, training_window=365, horizon=28, step_size=12
     return windows
 
 
-
-
-
-
-
-
 def walk_forward_rolling_window(df,training_window=365,horizon=28):
 
     total_days_available = (df['date'].max()-df['date'].min()).days

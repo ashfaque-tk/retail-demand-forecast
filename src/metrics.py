@@ -19,7 +19,7 @@ def forecast_error(test_df, pred_df):
 
     # assert test_df.shape[0] == pred_df.shape[0]
 
-    return merged.groupby('item_id',observed=True).apply(lambda x: np.sqrt(np.mean((x['sales'] - x['sales_pred'])**2)))
+    return merged.groupby('item_id',observed=True).apply(lambda x: np.sqrt(np.mean((x['sales'] - x['sales_pred'])**2)),include_groups = False)
     # Series indexed by item_id
     # return np.sqrt(np.mean(test_df['sales']-pred_df)**2)
 
@@ -71,9 +71,14 @@ def calculate_mape(y_true, y_pred, ignore_zeros = True):
         return np.mean(np.abs((y_true - y_pred) / np.maximum(y_true, 1e-5))) * 100
 
 
+def mae(ytrue,ypred):
+    y,p = np.asarray(ytrue,float),np.asarray(ypred,float)
 
-def bias(ytrue, pred):
-    y, p = np.asarray(ytrue, float), np.asarray(pred, float)
+    return abs(p.sum()-y.sum())/y.sum()
+
+
+def bias(ytrue, ypred):
+    y, p = np.asarray(ytrue, float), np.asarray(ypred, float)
     return (p.sum() - y.sum()) / y.sum()
 
 def fva(baseline_wmape, model_wmape):
