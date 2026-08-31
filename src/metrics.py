@@ -83,3 +83,14 @@ def bias(ytrue, ypred):
 
 def fva(baseline_wmape, model_wmape):
     return (baseline_wmape - model_wmape) / baseline_wmape
+
+
+def get_all_metrics(train_df:pd.DataFrame,test_df:pd.DataFrame,pred_df:pd.DataFrame)->dict:
+
+    '''return all metrics as a dict '''
+
+    get_wrmsse = wrmsse(train_df,test_df,pred_df)
+    get_mae = mae(ytrue=train_df['sales'],ypred=pred_df['sales_pred'])
+    get_bias =  bias(ytrue=train_df['sales'],pred=pred_df['sales_pred'])
+
+    return {'wrmsse':get_wrmsse,'MAE%':get_mae*100,'BIAS%':get_bias*100}

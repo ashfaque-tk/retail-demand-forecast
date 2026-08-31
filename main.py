@@ -5,7 +5,7 @@ from datetime import date
 import psycopg2
 import joblib
 import pandas as pd
-from src.pipeline import get_known_future_features, recursive_forecast
+from src.recursive_model import get_known_future_features, recursive_forecast
 
 app = FastAPI(title='Retail Forecast API')
 

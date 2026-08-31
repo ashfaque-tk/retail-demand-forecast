@@ -15,7 +15,7 @@ import pandas as pd
 import lightgbm as lgb
 import mlflow
 
-from src.pipeline import recursive_forecast_batch
+from src.recursive_model import recursive_forecast_batch
 from src.features import GetLagRollFeatures, get_avg_sales, get_price_features, get_known_future_features
 from src.metrics import wrmsse
 
