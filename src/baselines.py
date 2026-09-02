@@ -68,7 +68,7 @@ def seasonal_naive(train_df: pd.DataFrame, test_df: pd.DataFrame, lag_days: int 
     pred_df = pd.concat([pred_df, quantiles], axis=1)
 
     pred_df = pred_df.merge(
-        test_df[['item_id', 'date', 'sales']].rename(columns={'sales': 'real_sales'}),
+        test_df[['item_id','dept_id','cat_id', 'date', 'sales']].rename(columns={'sales': 'real_sales'}),
         on=['item_id', 'date'], how='left'
     )
 
@@ -107,7 +107,7 @@ def simple_moving_average(train_df: pd.DataFrame, test_df: pd.DataFrame, window_
     pred_df = pd.concat([pred_df, quantiles], axis=1)
 
     pred_df = pred_df.merge(
-        test_df[['item_id', 'date', 'sales']].rename(columns={'sales': 'real_sales'}),
+        test_df[['item_id','dept_id','cat_id' ,'date', 'sales']].rename(columns={'sales': 'real_sales'}),
         on=['item_id', 'date'], how='left'
     )
 

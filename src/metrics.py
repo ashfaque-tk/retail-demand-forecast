@@ -8,8 +8,8 @@ def scale(train_df):
     train_sorted = train_df.sort_values(['item_id', 'date'])
     diffs = train_sorted.groupby('item_id',observed=True)['sales'].diff()
     return train_sorted.assign(diff=diffs).groupby('item_id',observed=True).apply(
-        lambda x: np.sqrt(np.mean(x['diff'].dropna()**2))
-    )  # Series indexed by item_id, shape (n_items,)
+        lambda x: np.sqrt(np.mean(x['diff'].dropna()**2)),include_groups=False)
+     # Series indexed by item_id, shape (n_items,)
 
 # Forecast error: per-item RMSE over horizon
 def forecast_error(test_df, pred_df):
@@ -19,7 +19,8 @@ def forecast_error(test_df, pred_df):
 
     # assert test_df.shape[0] == pred_df.shape[0]
 
-    return merged.groupby('item_id',observed=True).apply(lambda x: np.sqrt(np.mean((x['sales'] - x['sales_pred'])**2)),include_groups = False)
+    return merged.groupby('item_id',observed=True).apply(lambda x: np.sqrt(np.mean((x['sales'] - x['sales_pred'])**2)),
+                                                         include_groups = False)
     # Series indexed by item_id
     # return np.sqrt(np.mean(test_df['sales']-pred_df)**2)
 
@@ -71,18 +72,32 @@ def calculate_mape(y_true, y_pred, ignore_zeros = True):
         return np.mean(np.abs((y_true - y_pred) / np.maximum(y_true, 1e-5))) * 100
 
 
-def mae(ytrue,ypred):
-    y,p = np.asarray(ytrue,float),np.asarray(ypred,float)
+def mae(ytrue, ypred):
+    y, p = np.asarray(ytrue, float), np.asarray(ypred, float)
+    return np.mean(np.abs(p - y))
 
-    return abs(p.sum()-y.sum())/y.sum()
 
+def mae_dept(true_df,pred_df):
+
+    true = true_df.groupby('dept_id',observed=True)['sales'].sum().reset_index()
+    preds = pred_df.groupby('dept_id',observed=True)['sales_pred'].sum().reset_index()
+
+    return np.mean(np.abs(true['sales']-preds['sales_pred']))
+
+
+def mae_cat(true_df,pred_df):
+
+    true = true_df.groupby('cat_id',observed=True)['sales'].sum().reset_index()
+    preds = pred_df.groupby('cat_id',observed=True)['sales_pred'].sum().reset_index()
+
+    return np.mean(np.abs(true['sales']-preds['sales_pred']))
 
 def bias(ytrue, ypred):
     y, p = np.asarray(ytrue, float), np.asarray(ypred, float)
-    return (p.sum() - y.sum()) / y.sum()
+    return ((p.sum() - y.sum()) / y.sum())*100
 
 def fva(baseline_wmape, model_wmape):
-    return (baseline_wmape - model_wmape) / baseline_wmape
+    return round((baseline_wmape - model_wmape)*100 / baseline_wmape,2)
 
 
 def get_all_metrics(train_df:pd.DataFrame,test_df:pd.DataFrame,pred_df:pd.DataFrame)->dict:
@@ -90,7 +105,12 @@ def get_all_metrics(train_df:pd.DataFrame,test_df:pd.DataFrame,pred_df:pd.DataFr
     '''return all metrics as a dict '''
 
     get_wrmsse = wrmsse(train_df,test_df,pred_df)
-    get_mae = mae(ytrue=train_df['sales'],ypred=pred_df['sales_pred'])
-    get_bias =  bias(ytrue=train_df['sales'],pred=pred_df['sales_pred'])
+    get_mae = mae(ytrue=test_df['sales'],ypred=pred_df['sales_pred'])
+    get_bias =  bias(ytrue=test_df['sales'],ypred=pred_df['sales_pred'])
 
-    return {'wrmsse':get_wrmsse,'MAE%':get_mae*100,'BIAS%':get_bias*100}
+    get_mae_dept = mae_dept(test_df,pred_df)
+    get_mae_cat = mae_cat(test_df,pred_df)
+
+    # get_holding_cost = 
+
+    return {'wrmsse':get_wrmsse,'MAE':get_mae,'BIAS%':get_bias,'MAE-DEPT-AGG':get_mae_dept,'MAE-CAT-AGG':get_mae_cat}

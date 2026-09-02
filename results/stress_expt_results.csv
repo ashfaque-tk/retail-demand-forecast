@@ -1,6 +1,0 @@
-,Window,WRMSSE (Static Model),WRMSSE (Monthly Retrain),Bias (Static Model),Bias (Monthly Retrain)
-0,W1 (Jan-Feb),0.8444,0.8444,0.1657,0.1657
-1,W2 (Feb-Mar),0.9973,0.8652,0.3317,0.2297
-2,W3 (Mar-Mar),1.1099,0.8419,0.4156,0.2268
-3,W4 (Mar-Apr),1.2028,0.8471,0.4591,0.2203
-4,W5 (Apr-May),1.2721,0.8472,0.4827,0.182

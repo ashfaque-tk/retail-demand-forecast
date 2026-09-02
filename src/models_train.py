@@ -46,11 +46,12 @@ def _make_model(kind: str, quantile: float | None = None, categorical_cols: list
         from lightgbm import LGBMRegressor  # optional
         if quantile is not None:
             objective = 'quantile'
-            params = {'alpha'=quantile}
+            
         else:
             objective = 'tweedie'
 
         return LGBMRegressor(objective=objective,quantile=quantile,
+                             tweedie_variance_power=1.2,
             n_estimators=200,
             learning_rate=0.05,
             num_leaves=31,
@@ -93,7 +94,7 @@ def _check_features(X: pd.DataFrame, categorical_cols: list[str] | None):
     bad_cols = [c for c in non_cat_cols if not pd.api.types.is_numeric_dtype(X[c])]
     if bad_cols:
         raise TypeError(
-            f"DemandModel received non-numeric, non-declared columns: {bad_cols}. "
+            f"SelectModel received non-numeric, non-declared columns: {bad_cols}. "
             f"Either encode them (.cat.codes) or add them to categorical_cols."
         )
 

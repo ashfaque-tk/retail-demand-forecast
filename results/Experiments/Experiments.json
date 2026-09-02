@@ -1,0 +1,1303 @@
+[
+  {
+    "experiment_id": "experiment_1788265449",
+    "timestamp": "2026-09-01T14:28:29.896522",
+    "run": "Experiment",
+    "model": "lgbm",
+    "backtest_mode": "rolling",
+    "training_window": 730,
+    "horizon_days": 28,
+    "use_log_transform": false,
+    "categorical_cols": [
+      "item_id",
+      "cat_id",
+      "dept_id"
+    ],
+    "max_windows": 5,
+    "n_windows_run": 5,
+    "n_features": 40,
+    "features": [
+      "item_id",
+      "dept_id",
+      "cat_id",
+      "sell_price",
+      "month",
+      "year",
+      "snap_CA",
+      "day_of_week",
+      "day_of_month",
+      "week_of_year",
+      "is_event",
+      "days_to_next_event",
+      "days_since_last_event",
+      "is_event_in_7_days",
+      "is_sporting_event",
+      "is_cultural_event",
+      "is_national_event",
+      "is_religious_event",
+      "lag_7",
+      "lag_28",
+      "lag_60",
+      "lag_90",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "rolling_mean_60",
+      "rolling_mean_90",
+      "rolling_max_7",
+      "rolling_max_28",
+      "rolling_max_60",
+      "rolling_max_90",
+      "rolling_lag_28_win_7",
+      "rolling_lag_28_win_28",
+      "selling_trend",
+      "delta_price_weekn-1",
+      "price_historical_mean",
+      "price_historical_std",
+      "price_ratio_mean",
+      "is_discounted",
+      "dept_mean_price",
+      "delta_price_rltv_dept"
+    ],
+    "duration_sec": 260.4785215854645,
+    "metrics": [
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 4.6407010711,
+        "BIAS%": -4.6407010711,
+        "wrmsse": 1.1292851196
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 1.8760505583,
+        "BIAS%": 1.8760505583,
+        "wrmsse": 0.8807819797
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 1.4389568573,
+        "BIAS%": 1.4389568573,
+        "wrmsse": 0.8400839151
+      },
+      {
+        "window_id": 1,
+        "train_start": "2011-05-29T00:00:00.000",
+        "train_end": "2013-05-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 4.357129773,
+        "BIAS%": -4.357129773,
+        "wrmsse": 1.1103752306
+      },
+      {
+        "window_id": 1,
+        "train_start": "2011-05-29T00:00:00.000",
+        "train_end": "2013-05-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 8.9891081856,
+        "BIAS%": -8.9891081856,
+        "wrmsse": 0.8692848536
+      },
+      {
+        "window_id": 1,
+        "train_start": "2011-05-29T00:00:00.000",
+        "train_end": "2013-05-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 0.8783151493,
+        "BIAS%": -0.8783151493,
+        "wrmsse": 0.8123841995
+      },
+      {
+        "window_id": 2,
+        "train_start": "2011-09-26T00:00:00.000",
+        "train_end": "2013-09-25T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 6.3469000248,
+        "BIAS%": 6.3469000248,
+        "wrmsse": 1.157479102
+      },
+      {
+        "window_id": 2,
+        "train_start": "2011-09-26T00:00:00.000",
+        "train_end": "2013-09-25T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 2.9922645324,
+        "BIAS%": 2.9922645324,
+        "wrmsse": 0.9236621659
+      },
+      {
+        "window_id": 2,
+        "train_start": "2011-09-26T00:00:00.000",
+        "train_end": "2013-09-25T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 5.4438344789,
+        "BIAS%": 5.4438344789,
+        "wrmsse": 0.84649068
+      },
+      {
+        "window_id": 3,
+        "train_start": "2012-01-24T00:00:00.000",
+        "train_end": "2014-01-23T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 1.912201582,
+        "BIAS%": 1.912201582,
+        "wrmsse": 1.1436433769
+      },
+      {
+        "window_id": 3,
+        "train_start": "2012-01-24T00:00:00.000",
+        "train_end": "2014-01-23T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 9.3389051594,
+        "BIAS%": 9.3389051594,
+        "wrmsse": 0.8674043316
+      },
+      {
+        "window_id": 3,
+        "train_start": "2012-01-24T00:00:00.000",
+        "train_end": "2014-01-23T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 7.7625564696,
+        "BIAS%": 7.7625564696,
+        "wrmsse": 0.8433876114
+      },
+      {
+        "window_id": 4,
+        "train_start": "2012-05-23T00:00:00.000",
+        "train_end": "2014-05-23T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 0.6930858624,
+        "BIAS%": -0.6930858624,
+        "wrmsse": 1.1469386137
+      },
+      {
+        "window_id": 4,
+        "train_start": "2012-05-23T00:00:00.000",
+        "train_end": "2014-05-23T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 1.9621196988,
+        "BIAS%": -1.9621196988,
+        "wrmsse": 0.8806357544
+      },
+      {
+        "window_id": 4,
+        "train_start": "2012-05-23T00:00:00.000",
+        "train_end": "2014-05-23T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 3.9097472002,
+        "BIAS%": 3.9097472002,
+        "wrmsse": 0.8494167315
+      }
+    ],
+    "fva": [
+      {
+        "window_id": 0,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 59.57,
+        "fva_model_vs_naive": 68.99
+      },
+      {
+        "window_id": 0,
+        "metric": "BIAS%",
+        "fva_moving_average_vs_naive": 140.43,
+        "fva_model_vs_naive": 131.01
+      },
+      {
+        "window_id": 0,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 22.01,
+        "fva_model_vs_naive": 25.61
+      },
+      {
+        "window_id": 1,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": -106.31,
+        "fva_model_vs_naive": 79.84
+      },
+      {
+        "window_id": 1,
+        "metric": "BIAS%",
+        "fva_moving_average_vs_naive": -106.31,
+        "fva_model_vs_naive": 79.84
+      },
+      {
+        "window_id": 1,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 21.71,
+        "fva_model_vs_naive": 26.84
+      },
+      {
+        "window_id": 2,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 52.85,
+        "fva_model_vs_naive": 14.23
+      },
+      {
+        "window_id": 2,
+        "metric": "BIAS%",
+        "fva_moving_average_vs_naive": 52.85,
+        "fva_model_vs_naive": 14.23
+      },
+      {
+        "window_id": 2,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 20.2,
+        "fva_model_vs_naive": 26.87
+      },
+      {
+        "window_id": 3,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": -388.38,
+        "fva_model_vs_naive": -305.95
+      },
+      {
+        "window_id": 3,
+        "metric": "BIAS%",
+        "fva_moving_average_vs_naive": -388.38,
+        "fva_model_vs_naive": -305.95
+      },
+      {
+        "window_id": 3,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 24.15,
+        "fva_model_vs_naive": 26.25
+      },
+      {
+        "window_id": 4,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": -183.1,
+        "fva_model_vs_naive": -464.11
+      },
+      {
+        "window_id": 4,
+        "metric": "BIAS%",
+        "fva_moving_average_vs_naive": -183.1,
+        "fva_model_vs_naive": 664.11
+      },
+      {
+        "window_id": 4,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 23.22,
+        "fva_model_vs_naive": 25.94
+      }
+    ]
+  },
+  {
+    "experiment_id": "experiment_1788268518",
+    "timestamp": "2026-09-01T15:20:15.257569",
+    "run": "Experiment",
+    "model": "lgbm",
+    "backtest_mode": "rolling",
+    "training_window": 730,
+    "horizon_days": 28,
+    "use_log_transform": true,
+    "categorical_cols": [
+      "item_id",
+      "cat_id",
+      "dept_id"
+    ],
+    "max_windows": 5,
+    "n_windows_run": 5,
+    "n_features": 40,
+    "features": [
+      "item_id",
+      "dept_id",
+      "cat_id",
+      "sell_price",
+      "month",
+      "year",
+      "snap_CA",
+      "day_of_week",
+      "day_of_month",
+      "week_of_year",
+      "is_event",
+      "days_to_next_event",
+      "days_since_last_event",
+      "is_event_in_7_days",
+      "is_sporting_event",
+      "is_cultural_event",
+      "is_national_event",
+      "is_religious_event",
+      "lag_7",
+      "lag_28",
+      "lag_60",
+      "lag_90",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "rolling_mean_60",
+      "rolling_mean_90",
+      "rolling_max_7",
+      "rolling_max_28",
+      "rolling_max_60",
+      "rolling_max_90",
+      "rolling_lag_28_win_7",
+      "rolling_lag_28_win_28",
+      "selling_trend",
+      "delta_price_weekn-1",
+      "price_historical_mean",
+      "price_historical_std",
+      "price_ratio_mean",
+      "is_discounted",
+      "dept_mean_price",
+      "delta_price_rltv_dept"
+    ],
+    "duration_sec": 297.0966901779175,
+    "metrics": [
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 154.500844924,
+        "BIAS%": -464.0701071081,
+        "wrmsse": 1.1292851196
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 135.0752249949,
+        "BIAS%": 187.6050558343,
+        "wrmsse": 0.8807819797
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 220.6721317508,
+        "BIAS%": -2528.7954511228,
+        "wrmsse": 0.8448916764
+      },
+      {
+        "window_id": 1,
+        "train_start": "2011-05-29T00:00:00.000",
+        "train_end": "2013-05-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 152.4309978769,
+        "BIAS%": -435.7129773026,
+        "wrmsse": 1.1103752306
+      },
+      {
+        "window_id": 1,
+        "train_start": "2011-05-29T00:00:00.000",
+        "train_end": "2013-05-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 132.4135506617,
+        "BIAS%": -898.9108185563,
+        "wrmsse": 0.8692848536
+      },
+      {
+        "window_id": 1,
+        "train_start": "2011-05-29T00:00:00.000",
+        "train_end": "2013-05-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 238.9342824235,
+        "BIAS%": -2711.4045737576,
+        "wrmsse": 0.8462338107
+      },
+      {
+        "window_id": 2,
+        "train_start": "2011-09-26T00:00:00.000",
+        "train_end": "2013-09-25T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 156.7794685442,
+        "BIAS%": 634.6900024767,
+        "wrmsse": 1.157479102
+      },
+      {
+        "window_id": 2,
+        "train_start": "2011-09-26T00:00:00.000",
+        "train_end": "2013-09-25T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 138.4335371792,
+        "BIAS%": 299.2264532391,
+        "wrmsse": 0.9236621659
+      },
+      {
+        "window_id": 2,
+        "train_start": "2011-09-26T00:00:00.000",
+        "train_end": "2013-09-25T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 234.4531425603,
+        "BIAS%": -2182.0897527525,
+        "wrmsse": 0.8833799438
+      },
+      {
+        "window_id": 3,
+        "train_start": "2012-01-24T00:00:00.000",
+        "train_end": "2014-01-23T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 147.2302927311,
+        "BIAS%": 191.2201582018,
+        "wrmsse": 1.1436433769
+      },
+      {
+        "window_id": 3,
+        "train_start": "2012-01-24T00:00:00.000",
+        "train_end": "2014-01-23T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 131.6954518033,
+        "BIAS%": 933.8905159372,
+        "wrmsse": 0.8674043316
+      },
+      {
+        "window_id": 3,
+        "train_start": "2012-01-24T00:00:00.000",
+        "train_end": "2014-01-23T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 211.5028291717,
+        "BIAS%": -1978.2803766312,
+        "wrmsse": 0.8300824347
+      },
+      {
+        "window_id": 4,
+        "train_start": "2012-05-23T00:00:00.000",
+        "train_end": "2014-05-23T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 145.3510411798,
+        "BIAS%": -69.3085862386,
+        "wrmsse": 1.1469386137
+      },
+      {
+        "window_id": 4,
+        "train_start": "2012-05-23T00:00:00.000",
+        "train_end": "2014-05-23T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 126.4507384384,
+        "BIAS%": -196.2119698846,
+        "wrmsse": 0.8806357544
+      },
+      {
+        "window_id": 4,
+        "train_start": "2012-05-23T00:00:00.000",
+        "train_end": "2014-05-23T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 205.8736081219,
+        "BIAS%": -2475.6664283028,
+        "wrmsse": 0.8576187677
+      }
+    ],
+    "fva": [
+      {
+        "window_id": 0,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 12.57,
+        "fva_model_vs_naive": -42.83
+      },
+      {
+        "window_id": 0,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 22.01,
+        "fva_model_vs_naive": 25.18
+      },
+      {
+        "window_id": 1,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 13.13,
+        "fva_model_vs_naive": -56.75
+      },
+      {
+        "window_id": 1,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 21.71,
+        "fva_model_vs_naive": 23.79
+      },
+      {
+        "window_id": 2,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 11.7,
+        "fva_model_vs_naive": -49.54
+      },
+      {
+        "window_id": 2,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 20.2,
+        "fva_model_vs_naive": 23.68
+      },
+      {
+        "window_id": 3,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 10.55,
+        "fva_model_vs_naive": -43.65
+      },
+      {
+        "window_id": 3,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 24.15,
+        "fva_model_vs_naive": 27.42
+      },
+      {
+        "window_id": 4,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 13.0,
+        "fva_model_vs_naive": -41.64
+      },
+      {
+        "window_id": 4,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 23.22,
+        "fva_model_vs_naive": 25.23
+      }
+    ]
+  },
+  {
+    "experiment_id": "experiment_1788271848",
+    "timestamp": "2026-09-01T16:15:33.641441",
+    "run": "Experiment",
+    "model": "lgbm",
+    "backtest_mode": "rolling",
+    "training_window": 730,
+    "horizon_days": 28,
+    "use_log_transform": false,
+    "categorical_cols": [
+      "item_id",
+      "cat_id",
+      "dept_id"
+    ],
+    "max_windows": 5,
+    "n_windows_run": 5,
+    "n_features": 40,
+    "features": [
+      "item_id",
+      "dept_id",
+      "cat_id",
+      "sell_price",
+      "month",
+      "year",
+      "snap_CA",
+      "day_of_week",
+      "day_of_month",
+      "week_of_year",
+      "is_event",
+      "days_to_next_event",
+      "days_since_last_event",
+      "is_event_in_7_days",
+      "is_sporting_event",
+      "is_cultural_event",
+      "is_national_event",
+      "is_religious_event",
+      "lag_7",
+      "lag_28",
+      "lag_60",
+      "lag_90",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "rolling_mean_60",
+      "rolling_mean_90",
+      "rolling_max_7",
+      "rolling_max_28",
+      "rolling_max_60",
+      "rolling_max_90",
+      "rolling_lag_28_win_7",
+      "rolling_lag_28_win_28",
+      "selling_trend",
+      "delta_price_weekn-1",
+      "price_historical_mean",
+      "price_historical_std",
+      "price_ratio_mean",
+      "is_discounted",
+      "dept_mean_price",
+      "delta_price_rltv_dept"
+    ],
+    "duration_sec": 285.3465476036072,
+    "metrics": [
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 154.500844924,
+        "BIAS%": -464.0701071081,
+        "wrmsse": 1.1292851196
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 135.0752249949,
+        "BIAS%": 187.6050558343,
+        "wrmsse": 0.8807819797
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 247.7068435377,
+        "BIAS%": 203.0493768129,
+        "wrmsse": 0.8367695003
+      },
+      {
+        "window_id": 1,
+        "train_start": "2011-05-29T00:00:00.000",
+        "train_end": "2013-05-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 152.4309978769,
+        "BIAS%": -435.7129773026,
+        "wrmsse": 1.1103752306
+      },
+      {
+        "window_id": 1,
+        "train_start": "2011-05-29T00:00:00.000",
+        "train_end": "2013-05-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 132.4135506617,
+        "BIAS%": -898.9108185563,
+        "wrmsse": 0.8692848536
+      },
+      {
+        "window_id": 1,
+        "train_start": "2011-05-29T00:00:00.000",
+        "train_end": "2013-05-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 269.1773066415,
+        "BIAS%": 102.5244504778,
+        "wrmsse": 0.8115098752
+      },
+      {
+        "window_id": 2,
+        "train_start": "2011-09-26T00:00:00.000",
+        "train_end": "2013-09-25T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 156.7794685442,
+        "BIAS%": 634.6900024767,
+        "wrmsse": 1.157479102
+      },
+      {
+        "window_id": 2,
+        "train_start": "2011-09-26T00:00:00.000",
+        "train_end": "2013-09-25T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 138.4335371792,
+        "BIAS%": 299.2264532391,
+        "wrmsse": 0.9236621659
+      },
+      {
+        "window_id": 2,
+        "train_start": "2011-09-26T00:00:00.000",
+        "train_end": "2013-09-25T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 266.3560473053,
+        "BIAS%": 768.8807710468,
+        "wrmsse": 0.8494914894
+      },
+      {
+        "window_id": 3,
+        "train_start": "2012-01-24T00:00:00.000",
+        "train_end": "2014-01-23T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 147.2302927311,
+        "BIAS%": 191.2201582018,
+        "wrmsse": 1.1436433769
+      },
+      {
+        "window_id": 3,
+        "train_start": "2012-01-24T00:00:00.000",
+        "train_end": "2014-01-23T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 131.6954518033,
+        "BIAS%": 933.8905159372,
+        "wrmsse": 0.8674043316
+      },
+      {
+        "window_id": 3,
+        "train_start": "2012-01-24T00:00:00.000",
+        "train_end": "2014-01-23T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 239.033588205,
+        "BIAS%": 905.6653188226,
+        "wrmsse": 0.8446882098
+      },
+      {
+        "window_id": 4,
+        "train_start": "2012-05-23T00:00:00.000",
+        "train_end": "2014-05-23T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 145.3510411798,
+        "BIAS%": -69.3085862386,
+        "wrmsse": 1.1469386137
+      },
+      {
+        "window_id": 4,
+        "train_start": "2012-05-23T00:00:00.000",
+        "train_end": "2014-05-23T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 126.4507384384,
+        "BIAS%": -196.2119698846,
+        "wrmsse": 0.8806357544
+      },
+      {
+        "window_id": 4,
+        "train_start": "2012-05-23T00:00:00.000",
+        "train_end": "2014-05-23T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 234.1830527943,
+        "BIAS%": 534.6905051542,
+        "wrmsse": 0.8486484791
+      }
+    ],
+    "fva": [
+      {
+        "window_id": 0,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 12.57,
+        "fva_model_vs_naive": -60.33
+      },
+      {
+        "window_id": 0,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 22.01,
+        "fva_model_vs_naive": 25.9
+      },
+      {
+        "window_id": 1,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 13.13,
+        "fva_model_vs_naive": -76.59
+      },
+      {
+        "window_id": 1,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 21.71,
+        "fva_model_vs_naive": 26.92
+      },
+      {
+        "window_id": 2,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 11.7,
+        "fva_model_vs_naive": -69.89
+      },
+      {
+        "window_id": 2,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 20.2,
+        "fva_model_vs_naive": 26.61
+      },
+      {
+        "window_id": 3,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 10.55,
+        "fva_model_vs_naive": -62.35
+      },
+      {
+        "window_id": 3,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 24.15,
+        "fva_model_vs_naive": 26.14
+      },
+      {
+        "window_id": 4,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 13.0,
+        "fva_model_vs_naive": -61.12
+      },
+      {
+        "window_id": 4,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 23.22,
+        "fva_model_vs_naive": 26.01
+      }
+    ]
+  },
+  {
+    "experiment_id": "experiment_1788272744",
+    "timestamp": "2026-09-01T16:26:42.766041",
+    "run": "Experiment",
+    "model": "lgbm",
+    "backtest_mode": "rolling",
+    "training_window": 730,
+    "horizon_days": 28,
+    "use_log_transform": false,
+    "categorical_cols": [
+      "item_id",
+      "cat_id",
+      "dept_id"
+    ],
+    "max_windows": 1,
+    "n_windows_run": 1,
+    "n_features": 40,
+    "features": [
+      "item_id",
+      "dept_id",
+      "cat_id",
+      "sell_price",
+      "month",
+      "year",
+      "snap_CA",
+      "day_of_week",
+      "day_of_month",
+      "week_of_year",
+      "is_event",
+      "days_to_next_event",
+      "days_since_last_event",
+      "is_event_in_7_days",
+      "is_sporting_event",
+      "is_cultural_event",
+      "is_national_event",
+      "is_religious_event",
+      "lag_7",
+      "lag_28",
+      "lag_60",
+      "lag_90",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "rolling_mean_60",
+      "rolling_mean_90",
+      "rolling_max_7",
+      "rolling_max_28",
+      "rolling_max_60",
+      "rolling_max_90",
+      "rolling_lag_28_win_7",
+      "rolling_lag_28_win_28",
+      "selling_trend",
+      "delta_price_weekn-1",
+      "price_historical_mean",
+      "price_historical_std",
+      "price_ratio_mean",
+      "is_discounted",
+      "dept_mean_price",
+      "delta_price_rltv_dept"
+    ],
+    "duration_sec": 58.06399416923523,
+    "metrics": [
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE%": 154.500844924,
+        "BIAS%": -464.0701071081,
+        "wrmsse": 1.1292851196
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE%": 135.0752249949,
+        "BIAS%": 187.6050558343,
+        "wrmsse": 0.8807819797
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE%": 247.7068435377,
+        "BIAS%": 203.0493768129,
+        "wrmsse": 0.8367695003
+      }
+    ],
+    "fva": [
+      {
+        "window_id": 0,
+        "metric": "MAE%",
+        "fva_moving_average_vs_naive": 12.57,
+        "fva_model_vs_naive": -60.33
+      },
+      {
+        "window_id": 0,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 22.01,
+        "fva_model_vs_naive": 25.9
+      }
+    ]
+  },
+  {
+    "experiment_id": "experiment_1788273212",
+    "timestamp": "2026-09-01T16:34:25.796950",
+    "run": "Experiment",
+    "model": "lgbm",
+    "backtest_mode": "rolling",
+    "training_window": 730,
+    "horizon_days": 28,
+    "use_log_transform": false,
+    "categorical_cols": [
+      "item_id",
+      "cat_id",
+      "dept_id"
+    ],
+    "max_windows": 1,
+    "n_windows_run": 1,
+    "n_features": 40,
+    "features": [
+      "item_id",
+      "dept_id",
+      "cat_id",
+      "sell_price",
+      "month",
+      "year",
+      "snap_CA",
+      "day_of_week",
+      "day_of_month",
+      "week_of_year",
+      "is_event",
+      "days_to_next_event",
+      "days_since_last_event",
+      "is_event_in_7_days",
+      "is_sporting_event",
+      "is_cultural_event",
+      "is_national_event",
+      "is_religious_event",
+      "lag_7",
+      "lag_28",
+      "lag_60",
+      "lag_90",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "rolling_mean_60",
+      "rolling_mean_90",
+      "rolling_max_7",
+      "rolling_max_28",
+      "rolling_max_60",
+      "rolling_max_90",
+      "rolling_lag_28_win_7",
+      "rolling_lag_28_win_28",
+      "selling_trend",
+      "delta_price_weekn-1",
+      "price_historical_mean",
+      "price_historical_std",
+      "price_ratio_mean",
+      "is_discounted",
+      "dept_mean_price",
+      "delta_price_rltv_dept"
+    ],
+    "duration_sec": 53.406638622283936,
+    "metrics": [
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.5450084492,
+        "BIAS%": -4.6407010711,
+        "wrmsse": 1.1292851196
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.3507522499,
+        "BIAS%": 1.8760505583,
+        "wrmsse": 0.8807819797
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.4770684354,
+        "BIAS%": 2.0304937681,
+        "wrmsse": 0.8367695003
+      }
+    ],
+    "fva": [
+      {
+        "window_id": 0,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 12.57,
+        "fva_model_vs_naive": -60.33
+      },
+      {
+        "window_id": 0,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 22.01,
+        "fva_model_vs_naive": 25.9
+      }
+    ]
+  },
+  {
+    "experiment_id": "experiment_1788274164",
+    "timestamp": "2026-09-01T16:49:55.850421",
+    "run": "Experiment",
+    "model": "hgb",
+    "backtest_mode": "rolling",
+    "training_window": 730,
+    "horizon_days": 28,
+    "use_log_transform": false,
+    "categorical_cols": [
+      "item_id",
+      "cat_id",
+      "dept_id"
+    ],
+    "max_windows": 1,
+    "n_windows_run": 1,
+    "n_features": 40,
+    "features": [
+      "item_id",
+      "dept_id",
+      "cat_id",
+      "sell_price",
+      "month",
+      "year",
+      "snap_CA",
+      "day_of_week",
+      "day_of_month",
+      "week_of_year",
+      "is_event",
+      "days_to_next_event",
+      "days_since_last_event",
+      "is_event_in_7_days",
+      "is_sporting_event",
+      "is_cultural_event",
+      "is_national_event",
+      "is_religious_event",
+      "lag_7",
+      "lag_28",
+      "lag_60",
+      "lag_90",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "rolling_mean_60",
+      "rolling_mean_90",
+      "rolling_max_7",
+      "rolling_max_28",
+      "rolling_max_60",
+      "rolling_max_90",
+      "rolling_lag_28_win_7",
+      "rolling_lag_28_win_28",
+      "selling_trend",
+      "delta_price_weekn-1",
+      "price_historical_mean",
+      "price_historical_std",
+      "price_ratio_mean",
+      "is_discounted",
+      "dept_mean_price",
+      "delta_price_rltv_dept"
+    ],
+    "duration_sec": 31.689817667007446,
+    "metrics": [],
+    "fva": []
+  },
+  {
+    "experiment_id": "experiment_1788296548",
+    "timestamp": "2026-09-01T23:03:12.550541",
+    "run": "Experiment",
+    "model": "lgbm",
+    "backtest_mode": "rolling",
+    "training_window": 730,
+    "horizon_days": 28,
+    "use_log_transform": false,
+    "categorical_cols": [
+      "item_id",
+      "cat_id",
+      "dept_id"
+    ],
+    "max_windows": 1,
+    "n_windows_run": 1,
+    "n_features": 40,
+    "features": [
+      "item_id",
+      "dept_id",
+      "cat_id",
+      "sell_price",
+      "month",
+      "year",
+      "snap_CA",
+      "day_of_week",
+      "day_of_month",
+      "week_of_year",
+      "is_event",
+      "days_to_next_event",
+      "days_since_last_event",
+      "is_event_in_7_days",
+      "is_sporting_event",
+      "is_cultural_event",
+      "is_national_event",
+      "is_religious_event",
+      "lag_7",
+      "lag_28",
+      "lag_60",
+      "lag_90",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "rolling_mean_60",
+      "rolling_mean_90",
+      "rolling_max_7",
+      "rolling_max_28",
+      "rolling_max_60",
+      "rolling_max_90",
+      "rolling_lag_28_win_7",
+      "rolling_lag_28_win_28",
+      "selling_trend",
+      "delta_price_weekn-1",
+      "price_historical_mean",
+      "price_historical_std",
+      "price_ratio_mean",
+      "is_discounted",
+      "dept_mean_price",
+      "delta_price_rltv_dept"
+    ],
+    "duration_sec": 44.15651249885559,
+    "metrics": [
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.5450084492,
+        "BIAS%": -4.6407010711,
+        "wrmsse": 1.1292851196,
+        "MAE-DEPT": 1032.0,
+        "MAE-CAT": 1032.0
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.3507522499,
+        "BIAS%": 1.8760505583,
+        "wrmsse": 0.8807819797,
+        "MAE-DEPT": 1911.8169306861,
+        "MAE-CAT": 1911.8169306861
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.4770684354,
+        "BIAS%": 2.0304937681,
+        "wrmsse": 0.8367695003,
+        "MAE-DEPT": 915.1625329636,
+        "MAE-CAT": 915.1625329636
+      }
+    ],
+    "fva": [
+      {
+        "window_id": 0,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 12.57,
+        "fva_model_vs_naive": -60.33
+      },
+      {
+        "window_id": 0,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 22.01,
+        "fva_model_vs_naive": 25.9
+      }
+    ]
+  },
+  {
+    "experiment_id": "experiment_1788296802",
+    "timestamp": "2026-09-01T23:07:32.102406",
+    "run": "Experiment",
+    "model": "lgbm",
+    "backtest_mode": "rolling",
+    "training_window": 730,
+    "horizon_days": 28,
+    "use_log_transform": false,
+    "categorical_cols": [
+      "item_id",
+      "cat_id",
+      "dept_id"
+    ],
+    "max_windows": 1,
+    "n_windows_run": 1,
+    "n_features": 40,
+    "features": [
+      "item_id",
+      "dept_id",
+      "cat_id",
+      "sell_price",
+      "month",
+      "year",
+      "snap_CA",
+      "day_of_week",
+      "day_of_month",
+      "week_of_year",
+      "is_event",
+      "days_to_next_event",
+      "days_since_last_event",
+      "is_event_in_7_days",
+      "is_sporting_event",
+      "is_cultural_event",
+      "is_national_event",
+      "is_religious_event",
+      "lag_7",
+      "lag_28",
+      "lag_60",
+      "lag_90",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "rolling_mean_60",
+      "rolling_mean_90",
+      "rolling_max_7",
+      "rolling_max_28",
+      "rolling_max_60",
+      "rolling_max_90",
+      "rolling_lag_28_win_7",
+      "rolling_lag_28_win_28",
+      "selling_trend",
+      "delta_price_weekn-1",
+      "price_historical_mean",
+      "price_historical_std",
+      "price_ratio_mean",
+      "is_discounted",
+      "dept_mean_price",
+      "delta_price_rltv_dept"
+    ],
+    "duration_sec": 49.78079390525818,
+    "metrics": [
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.5450084492,
+        "BIAS%": -4.6407010711,
+        "wrmsse": 1.1292851196,
+        "MAE-DEPT": 1032.0,
+        "MAE-CAT": 1588.6666666667
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.3507522499,
+        "BIAS%": 1.8760505583,
+        "wrmsse": 0.8807819797,
+        "MAE-DEPT": 1911.8169306861,
+        "MAE-CAT": 3589.4446799129
+      },
+      {
+        "window_id": 0,
+        "train_start": "2011-01-29T00:00:00.000",
+        "train_end": "2013-01-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.4770684354,
+        "BIAS%": 2.0304937681,
+        "wrmsse": 0.8367695003,
+        "MAE-DEPT": 915.1625329636,
+        "MAE-CAT": 2035.8013381227
+      }
+    ],
+    "fva": [
+      {
+        "window_id": 0,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 12.57,
+        "fva_model_vs_naive": -60.33
+      },
+      {
+        "window_id": 0,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 22.01,
+        "fva_model_vs_naive": 25.9
+      }
+    ]
+  }
+]

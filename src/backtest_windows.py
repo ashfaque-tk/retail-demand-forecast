@@ -1,10 +1,8 @@
 '''functions to return rolling and expanding windows for backtesting expts.'''
 
 import pandas as pd
-from src.metrics import wrmsse
-from train_and_eval import build_train_features, predict_eval_set, train_models
+from typing import Dict
 
-from typing import tuple,List
 
 def split_data(df:pd.DataFrame, start_date:pd.DatetimeIndex, end_date:pd.DatetimeIndex, forecast_horizon=28)->pd.DataFrame:
     """
@@ -23,7 +21,7 @@ def split_data(df:pd.DataFrame, start_date:pd.DatetimeIndex, end_date:pd.Datetim
 
     return train_, test_
 
-def generate_rolling_windows(df, training_window=365, horizon=28, step_size=120, date_col='date'):
+def generate_rolling_windows(df:pd.DataFrame, training_window:int=365, horizon:int=28, step_size:int=120, date_col:str='date')->dict[str,pd.DatetimeIndex]:
     """
     Generates a list of fixed-size rolling window date ranges for walk-forward validation.
     """
