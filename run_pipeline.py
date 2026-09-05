@@ -24,6 +24,8 @@ from src.backtest_windows import generate_rolling_windows, generate_expanding_wi
 from src.utils import get_items_with_min_history
 from src.recursive_model import Forecaster
 
+from src.Inventory_optimization.restock_policy_1 import compute_rolling_tau_error, run_inventory_pipeline
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -47,6 +49,7 @@ CATEGORICAL_COLS = PIPELINE_CONFIG['categorical_cols']
 # behavior right now (defaults to 1), but explicit and tunable instead of silent.
 MAX_WINDOWS = PIPELINE_CONFIG.get('max_windows', 1)
 
+OOS_ERROR = {'ml':[],'ma':[],'naive':[]}
 
 def run_backtest_window(window_id: int, wnd: dict, train: pd.DataFrame, full_features: list,
                          feat_builder: FeatureBuilder, selected_models: SelectModel,
@@ -89,16 +92,16 @@ def run_backtest_window(window_id: int, wnd: dict, train: pd.DataFrame, full_fea
     preds_df = forecaster.recursive_forecaster(train_wnd, eval_wnd)
     metrics_model = get_all_metrics(train_wnd, eval_wnd, preds_df)
 
-    metric_rows = [
-        {'window_id': window_id, 'train_start': train_start.date(), 'train_end': train_end.date(),
-         'model': label, 'MAE': m['MAE'], 'BIAS%': m['BIAS%'], 'wrmsse': m['wrmsse'],'MAE-DEPT':m['MAE-DEPT-AGG'],
-         'MAE-CAT':m['MAE-CAT-AGG']}
-        for label, m in [
-            ('seasonal_naive', metrics_naive),
-            ('moving_average', metrics_ma),
-            (MODEL_NAME, metrics_model),
-        ]
-    ]
+    # metric_rows = [
+    #     {'window_id': window_id, 'train_start': train_start.date(), 'train_end': train_end.date(),
+    #      'model': label, 'MAE': m['MAE'], 'BIAS%': m['BIAS%'], 'wrmsse': m['wrmsse'],'MAE-DEPT':m['MAE-DEPT-AGG'],
+    #      'MAE-CAT':m['MAE-CAT-AGG']}
+    #     for label, m in [
+    #         ('seasonal_naive', metrics_naive),
+    #         ('moving_average', metrics_ma),
+    #         (MODEL_NAME, metrics_model),
+    #     ]
+    # ]
 
     fva_rows = [
         {
@@ -109,6 +112,65 @@ def run_backtest_window(window_id: int, wnd: dict, train: pd.DataFrame, full_fea
         for metric_key in ['MAE', 'wrmsse']
     ]
 
+    ####### Inventory policy calculations ##########
+    # 1. calculate the error deviation
+    lead_time = 11
+    review_period = 7
+
+    tau = lead_time + review_period
+
+    models_preds  = {'ml':preds_df,'ma':baseline_ma,'naive':baseline_naive}
+
+    # 1. Properly initialize cost_totals as a dictionary mapping model short names to empty dicts
+    cost_totals = {'naive': {}, 'ma': {}, 'ml': {}}
+
+    for name, preds in models_preds.items():
+        # Compute rolling out-of-sample error for the current model
+        error_model = compute_rolling_tau_error(eval_wnd, preds, tau=tau)
+
+        # Calculate inventory costs only for window_id > 0 (when past OOS error history exists)
+        if window_id != 0:
+            logger.info(f"calculating inventory cost for window: {window_id}")
+            
+            # Pass the previous window's OOS error DataFrame
+            cost_model = run_inventory_pipeline(
+                current_raw=eval_wnd,
+                current_forecast=preds,
+                oos_error=OOS_ERROR[name][-1]
+            )
+            # Store cost output dictionary under model key ('naive', 'ma', or 'ml')
+            cost_totals[name] = cost_model.to_dict()
+
+        # Append current window's error DataFrame to historical list
+        OOS_ERROR[name].append(error_model)
+
+    # Map internal model keys to readable log labels
+    name_to_label = {'naive': 'seasonal_naive', 'ma': 'moving_average', 'ml': MODEL_NAME}
+
+    # Build summary metric records for each evaluated model
+    metric_rows = [
+        {
+            'window_id': window_id, 
+            'train_start': train_start.date(), 
+            'train_end': train_end.date(),
+            'model': label, 
+            'MAE': m['MAE'], 
+            'BIAS%': m['BIAS%'], 
+            'wrmsse': m['wrmsse'],
+            'MAE-DEPT': m['MAE-DEPT-AGG'], 
+            'MAE-CAT': m['MAE-CAT-AGG'],
+            # Safely unpacks inventory cost metrics (will be empty dict for window_id == 0)
+            **cost_totals.get(short_name, {})
+        }
+        for short_name, label, m in [
+            ('naive', 'seasonal_naive', metrics_naive),
+            ('ma', 'moving_average', metrics_ma),
+            ('ml', MODEL_NAME, metrics_model),
+        ]
+    ]
+    # print(f"cost window id: {window_id}: {cost_totals}")
+    # print(metric_rows)
+    # quit()
     return metric_rows, fva_rows
 
 RESULTS_DIR = Path(PIPELINE_CONFIG['results_dir'])
@@ -189,8 +251,17 @@ def main():
     t0 = time.time()
 
     logger.info("[1/3] Loading data + validating")
-    train = pd.read_parquet(TRAIN_PATH)
+    train = pd.read_parquet(TRAIN_PATH) 
+    total_days = train['date'].nunique()
+
+    train= get_items_with_min_history(train,min_history_days=total_days-1).copy()
     test = pd.read_parquet(TEST_PATH)  # stress testing set, 137 days
+
+    # filter out the same items 
+    test = test[test['item_id'].isin(train['item_id'])].copy()
+
+    logger.info(f"items in train & test with full history: {train['item_id'].nunique(),test['item_id'].nunique()}")
+
     full_features = list(pd.read_pickle(FEATURE_PATH))
     logger.info("Feature set loaded: %d features", len(full_features))
 
@@ -204,11 +275,11 @@ def main():
     logger.info("[2/3] Generating %s backtest windows", BACKTEST_TYPE)
     if BACKTEST_TYPE == 'rolling':
         backtest_windows = generate_rolling_windows(
-            train, training_window=TRAINING_WINDOW, horizon=HORIZON, step_size=120
+            train, training_window=TRAINING_WINDOW, horizon=HORIZON, step_size=28
         )
     elif BACKTEST_TYPE == 'expanding':
         backtest_windows = generate_expanding_windows(
-            train, training_window=TRAINING_WINDOW, horizon=HORIZON, step_size=120
+            train, training_window=TRAINING_WINDOW, horizon=HORIZON, step_size=28
         )
     else:
         raise ValueError(f"Unknown backtest_mode: {BACKTEST_TYPE!r}")
@@ -264,6 +335,7 @@ def main():
             'duration_sec': time.time() - t0,
             'metrics': metrics_df,
             'fva': fva_df,
+            'Notes':PIPELINE_CONFIG.get('note')
         }
         log_experiment_results(EXPERIMENTS_LOG_PATH, experiment_record)
 
