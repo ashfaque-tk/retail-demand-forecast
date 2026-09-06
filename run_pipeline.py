@@ -154,7 +154,7 @@ def main() -> tuple[pd.DataFrame, pd.DataFrame, list[WindowResult]]:
         step_size_days=28,
         categorical_cols=CATEGORICAL_COLS,
         feature_names=full_features,
-        lead_time_days=PIPELINE_CONFIG.get("lead_time", 11),
+        lead_time_days=PIPELINE_CONFIG.get("lead_time", 4),
         review_period_days=PIPELINE_CONFIG.get("review_period", 7),
         holding_cost_rate=PIPELINE_CONFIG.get("holding_cost_rate", 0.02),
         min_history_days=100,

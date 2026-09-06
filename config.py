@@ -11,16 +11,16 @@ PIPELINE_CONFIG = {
     "forecast_type": "recursive", #Direct
     "training_window": 730,
     "horizon_days": 28,
-    "backtest_mode": "rolling",  "max_windows"  : 5,
+    "backtest_mode": "rolling",  "max_windows"  : 38,
     "categorical_cols":['item_id','cat_id','dept_id'],
     "train_data_path": str(DATA_DIR / "processed/sales_known_ca_1.parquet"),
     "test_data_path": str(DATA_DIR / "processed/sales_future_ca_1.parquet"),
     "final_feature_set":str(MODELS_DIR / "final_features_ca1.pkl"),
 
-
     "results_dir"   : str(BASE_DIR/'results'),
-    "note"  : "Inventory Cost formulation with items having full history "
-    
+    "note"  : "Inventory Cost formulation with items having full history ",
+    "lead_time" : 4,
+    'review_peiod': 7,
     
 }
 

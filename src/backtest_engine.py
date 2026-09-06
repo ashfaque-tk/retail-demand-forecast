@@ -49,7 +49,7 @@ class WindowResult:
     eval_actuals: pd.DataFrame
     inventory_costs: dict[str, dict[str, float]] = field(default_factory=dict)
 
-
+                     
 class BacktestEngine:
     """Walk-forward backtesting orchestrator for model-agnostic forecasting pipelines.
 
@@ -93,7 +93,7 @@ class BacktestEngine:
         training_window_days: int = 730,
         horizon_days: int = 28,
         backtest_mode: str = "rolling",
-        step_size_days: int = 28,
+        step_size_days: int = 28, # continous rolling windows
         categorical_cols: list[str] | None = None,
         feature_names: list[str] | None = None,
         lead_time_days: int = 11,
@@ -246,23 +246,13 @@ class BacktestEngine:
         preds_df = self.forecaster.recursive_forecaster(train_wnd, eval_wnd)
         metrics_ml = get_all_metrics(train_wnd, eval_wnd, preds_df)
 
-        # 4. Forecast Value Added (FVA) vs Seasonal Naive
-        fva_rows = [
-            {
-                "window_id": window_id,
-                "metric": metric_key,
-                "fva_moving_average_vs_naive": fva(metrics_naive[metric_key], metrics_ma[metric_key]),
-                "fva_model_vs_naive": fva(metrics_naive[metric_key], metrics_ml[metric_key]),
-            }
-            for metric_key in ["MAE", "wrmsse"]
-        ]
-
         # 5. Inventory Replenishment & Holding Cost Optimization
         models_preds: dict[str, pd.DataFrame] = {
             "ml": preds_df,
             "ma": baseline_ma,
             "naive": baseline_naive,
         }
+
         inventory_costs: dict[str, dict[str, float]] = {"naive": {}, "ma": {}, "ml": {}}
 
         for short_name, current_preds in models_preds.items():
@@ -303,6 +293,37 @@ class BacktestEngine:
             }
             for s_name, m in model_metrics_map.items()
         ]
+        # print(metric_rows)
+        df_metrics = pd.DataFrame(metric_rows)
+        # print(df_metrics)
+        # 2. Pivot so models become columns, metrics become rows per window
+        # Metrics included: MAE, wrmsse, monthly_holding_cost_mae, etc.
+        pivot_df = df_metrics.pivot(
+            index=["window_id", "train_start", "train_end"],
+            columns="model",
+        ).stack(level=0, future_stack=True).reset_index()
+
+        # Target metrics list
+        target_metrics = [
+            "MAE",
+            "wrmsse",
+            "monthly_holding_cost_mae",
+            "monthly_holding_cost_classical",
+            "monthly_holding_cost_rmse",
+        ]
+
+        # OPTION 1: Filter pivot_df cleanly by metric name
+        fva_df = pivot_df[pivot_df["level_3"].isin(target_metrics)].copy()
+        fva_df.rename(columns={"level_3": "metric"}, inplace=True)
+
+        # Calculate FVA columns directly using your existing fva() vector function
+        fva_df["fva_moving_average_vs_naive"] = fva(
+            fva_df["seasonal_naive"], fva_df["moving_average"]
+        )
+        fva_df["fva_model_vs_naive"] = fva(fva_df["seasonal_naive"], fva_df["lgbm"])
+
+        # OPTION 2: Convert directly to list of dicts without pivoting
+        fva_rows = fva_df.to_dict(orient="records")   
 
         result = WindowResult(
             window_id=window_id,

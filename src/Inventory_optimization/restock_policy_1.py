@@ -73,7 +73,7 @@ def generate_inventory_policy(df: pd.DataFrame, error_stats: pd.DataFrame, lead_
     raw_std = df.groupby("item_id")[sales_col].std().rename("raw_demand_std")
     policy = policy.merge(raw_std, on="item_id")
     policy["safety_stock_classical"] = (
-        k_factor * policy["raw_demand_std"] * np.sqrt(lead_time)
+        k_factor * policy["raw_demand_std"] * np.sqrt(tau)
     )
     policy["order_up_to_classical"] = (
         policy["forecast_tau"] + policy["safety_stock_classical"]
