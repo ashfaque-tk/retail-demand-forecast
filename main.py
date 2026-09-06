@@ -1,36 +1,15 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException,status
 import os 
 from pydantic import BaseModel
 from datetime import date
 import psycopg2
-import joblib
-import pandas as pd
-from src.recursive_model import get_known_future_features, recursive_forecast
+from psycopg2.extras import RealDictCursor
+
 
 app = FastAPI(title='Retail Forecast API')
 
-models = {
-    'point': joblib.load('models/lgb_model_ca1_deploy.pkl'),
-    'q10': joblib.load('models/lgb_q10_ca1_deploy.pkl'),
-    'q90': joblib.load('models/lgb_q90_ca1_deploy.pkl'),
-}
-cat_categories = joblib.load('models/cat_categories_ca1.pkl')
-feature_cols = joblib.load('models/feature_cols_ca1.pkl')
-recent_history = pd.read_parquet('models/recent_history_ca1.parquet')
-calendar_df = pd.read_csv('data/raw/calendar.csv', parse_dates=['date'])
-price_df = pd.read_csv('data/raw/sell_prices.csv')
-
-db_conn = psycopg2.connect(os.environ['DATABASE_URL'])
-db_conn.autocommit = True
-
-
-
-def log_predictions(item_id,store_id,results,prediction_made_date, model_version='v1'):
-    with db_conn.cursor() as cur:
-        for h,r in enumerate(results,start=1):
-            cur.execute(""" INSERT INTO predictions (item_id,store_id,target_date,prediction_made_date,horizon_days,model_version,sales_pred,q10,q90) 
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (item_id,store_id,r['date'].date(),prediction_made_date,h, model_version, float(r['sales_pred']),float(r['q10']),float(r['q90'])))
+def get_db_connection():
+    return psycopg2.connect(os.environ["DATABASE_URL"], cursor_factory=RealDictCursor)
 
 
 class ForecastRequest(BaseModel):
@@ -42,30 +21,88 @@ class DayForecast(BaseModel):
     sales_pred: float
     q10: float
     q90: float
+    q95: float
+
+class InventoryPolicy(BaseModel):
+    safety_stock: float 
+    reorder_point: float 
+    holding_cost: float
+    order_up_to : float
 
 class ForecastResponse(BaseModel):
     item_id: str
+    cat_id : str
+    dept_id: str
     forecast: list[DayForecast]
+    inventory_policy:InventoryPolicy
 
-@app.post("/forecast", response_model=ForecastResponse)
-def forecast_item(req: ForecastRequest):
-    item_history = recent_history[recent_history['item_id'] == req.item_id]
-    if item_history.empty:
-        raise HTTPException(status_code=404, detail=f"No history found for item_id {req.item_id}")
 
-    last_date = item_history['date'].max()
-    future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=req.horizon)
+@app.post("/forecast",response_model=ForecastResponse)
+def get_forecast(store_id:str,item_id:str):
+    '''Fetches pre-computed batch forecast and inventory policies directly from
+    PostgreSQL'''
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Query precomputed daily forecasts
+                cur.execute(
+                    ''' SELECT target_date, sales_pred,q10,q90, prediction_made_date
+                    FROM predictions 
+                    WHERE store_id =%s AND item_id=%s
+                        AND prediction_made_date = ( SELECT MAX(prediction_made_date)
+                        FROM predictions WHERE store_id=%s AND item_id=%s)  
+                        ORDER BY target_date ASC;
+                        ''',  (store_id,item_id,store_id,item_id))
+                forecast_rows = cur.fetchall() 
 
-    item_meta = {'dept_id': item_history['dept_id'].iloc[0], 'cat_id': item_history['cat_id'].iloc[0]} \
-        if 'dept_id' in item_history.columns else {}
-    item_price = price_df[(price_df['item_id'] == req.item_id) & (price_df['store_id'] == 'CA_1')]
-    future_static = get_known_future_features(req.item_id, future_dates, calendar_df, item_price, item_meta)
+                # Query precomputed policy metrics
+                cur.execute(
+                    """
+                    SELECT safety_stock, reorder_point, order_up_to,holding_cost_risk_period
+                    FROM inventory_policies
+                    WHERE store_id = %s AND item_id = %s
+                    ORDER BY created_at DESC LIMIT 1;
+                    """,
+                    (store_id, item_id),
+                )
+                policy_row = cur.fetchone()
 
-    results = recursive_forecast(models, item_history, future_static, feature_cols, cat_categories)
+                if not forecast_rows or policy_row:
+                    raise HTTPException(status_code=404,detail=f'no forecast or policy found for item_id {item_id}\
+                                        at store {store_id}')
+            latest_pred_date = str(forecast_rows[0]["prediction_made_date"])
 
-    log_predictions(req.item_id, 'CA_1', results, date.today())
+            data = {"item_id": item_id,
+                    "store_id": store_id,
+                    "prediction_made_date": latest_pred_date,
+                    "forecast": [
+                        {
+                            "target_date": str(r["target_date"]),
+                            "sales_pred": float(r["sales_pred"]),
+                            "q10": float(r["q10"]),
+                            "q90": float(r["q90"]),
+                        }
+                        for r in forecast_rows
+                    ],
+                    "inventory_policy": {
+                        "safety_stock": float(policy_row["safety_stock"]) if policy_row else 0.0,
+                        "reorder_point": float(policy_row["reorder_point"]) if policy_row else 0.0,
+                        "holding_cost": float(policy_row["holding_cost_risk_period"]) if policy_row else 0.0,
+                        "order_up_to" : float(policy_row['order_up_to'])
+                    }}
 
-    return {'item_id': req.item_id, 'forecast': [
-        {'date': str(r['date'].date()), 'sales_pred': r['sales_pred'], 'q10': r['q10'], 'q90': r['q90']}
-        for r in results
-    ]}
+            return {'status':'success','data':data}
+
+    except psycopg2.errors.UndefinedTable as e:
+        # Gracefully handle missing database table
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Inventory database is not properly initialized (table 'inventory_policies' missing)."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected database error occurred: {str(e)}"
+        )
+
+

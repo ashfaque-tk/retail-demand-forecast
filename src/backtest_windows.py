@@ -87,3 +87,11 @@ def generate_expanding_windows(df, training_window=365, horizon=28, step_size=12
         current_train_end += pd.Timedelta(days=int(step_size))
         
     return windows
+
+
+def __getattr__(name: str):
+    if name in ("BacktestEngine", "WindowResult"):
+        from src.backtest_engine import BacktestEngine, WindowResult
+        mapping = {"BacktestEngine": BacktestEngine, "WindowResult": WindowResult}
+        return mapping[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -14,8 +14,30 @@ CREATE TABLE IF NOT EXISTS predictions (
 
 CREATE TABLE IF NOT EXISTS actuals (
     item_id VARCHAR(50) NOT NULL,
+    cat_id VARCHAR(50) NOT NULL,
+    dept_id VARCHAR(50) NOT NULL,
     store_id VARCHAR(10) NOT NULL,
     date DATE NOT NULL,
     sales_actual FLOAT NOT NULL,
     PRIMARY KEY (item_id, store_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS inventory_policies (
+    id BIGSERIAL PRIMARY KEY,
+    item_id VARCHAR(50) NOT NULL,
+    store_id VARCHAR(10) NOT NULL,
+    calculated_date DATE NOT NULL,
+    policy_type VARCHAR(30) NOT NULL,          -- e.g., 'PARAMETRIC_RMSE', 'QUANTILE_LOSS'
+    lead_time_days INT NOT NULL DEFAULT 4,
+    review_period_days INT NOT NULL DEFAULT 7,
+    holding_cost_per_unit NUMERIC(10, 2) DEFAULT 0.00,
+    forecasted_risk_period NUMERIC(12, 4) NOT NULL, -- Summed demand forecast over (L + R)
+    safety_stock NUMERIC(12, 4) NOT NULL,
+    reorder_point NUMERIC(12, 4) NOT NULL DEFAULT 0.00,
+    order_up_to NUMERIC(12, 4) NOT NULL,
+    holding_cost_risk_period NUMERIC(12,4) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Ensure only one policy entry per item/store/date/type combination
+    CONSTRAINT uq_inventory_policy UNIQUE (item_id, store_id, calculated_date, policy_type)
 );
