@@ -6,12 +6,13 @@ DATA_DIR = BASE_DIR / "data"
 MODELS_DIR = BASE_DIR / 'models'
 
 PIPELINE_CONFIG = {
-    "run"  : "Experiment" ,# "Deploy" if Deploy save the final model
+    "run"  : "Deploy" ,# "Deploy" if Deploy save the final model
+    "note"  : "Inventory Cost formulation with items having full history ",
     "model": "lgbm",
     "forecast_type": "recursive", #Direct
     "training_window": 730,
     "horizon_days": 28,
-    "backtest_mode": "rolling",  "max_windows"  : 38,
+    "backtest_mode": "rolling",  "max_windows"  : 2,
     "categorical_cols":['item_id','cat_id','dept_id'],
     "train_data_path": str(DATA_DIR / "processed/sales_known_ca_1.parquet"),
     "test_data_path": str(DATA_DIR / "processed/sales_future_ca_1.parquet"),
@@ -19,7 +20,7 @@ PIPELINE_CONFIG = {
 
     "results_dir"   : str(BASE_DIR/'results'),
     "deployment_dir": str(MODELS_DIR / "deployments"),
-    "note"  : "Inventory Cost formulation with items having full history ",
+    "deployment_name":'',
     "lead_time" : 4,
     "review_period": 7,
     

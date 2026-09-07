@@ -49,7 +49,6 @@ class WindowResult:
     eval_actuals: pd.DataFrame
     inventory_costs: dict[str, dict[str, float]] = field(default_factory=dict)
 
-
 @dataclass
 class DeploymentResult:
     """Artifacts produced by one production forecast and inventory-policy run.
@@ -58,7 +57,6 @@ class DeploymentResult:
     The final model is then refit on all supplied historical data before forecasting
     the production horizon.
     """
-
     calibration_start: pd.Timestamp
     calibration_end: pd.Timestamp
     forecast_start: pd.Timestamp
@@ -344,7 +342,7 @@ class BacktestEngine:
         )
         fva_df["fva_model_vs_naive"] = fva(fva_df["seasonal_naive"], fva_df["lgbm"])
 
-        # OPTION 2: Convert directly to list of dicts without pivoting
+        #  Convert directly to list of dicts 
         fva_rows = fva_df.to_dict(orient="records")   
 
         result = WindowResult(
@@ -415,31 +413,26 @@ class BacktestEngine:
 
         return metrics_df, fva_df, window_results
 
-    def run_deploy(
-        self,
-        historical_data: pd.DataFrame,
-        forecast_data: pd.DataFrame,
-        feature_names: list[str] | None = None,
-        calibration_days: int | None = None,
-    ) -> DeploymentResult:
-        """Fit a final model and create production inventory decisions.
+    def run_deploy(self, historical_data:pd.DataFrame, 
+                   future_static_data:pd.DataFrame,
+                   calibration_days:int|None=None,
+                   quantiles:bool=False):
+        
+        '''Fit a final model and create production inventory decisions.
 
         The final ``calibration_days`` of the historical window are held out once
         to estimate the tau-day forecast-error distribution.  After calibration,
         the model is deliberately refit on *all* historical data before forecasting
-        ``forecast_data``.  Future actual sales are not required for this method.
-        """
-        feats = feature_names or self.feature_names
-        calibration_days = calibration_days or self.horizon_days
+        ``forecast_data``.  Future actual sales are not required for this method.'''
         if calibration_days < self.tau_days:
             raise ValueError(
                 f"calibration_days ({calibration_days}) must be at least tau_days ({self.tau_days})."
             )
-        if historical_data.empty or forecast_data.empty:
+        if historical_data.empty or future_static_data.empty:
             raise ValueError("historical_data and forecast_data must both be non-empty.")
 
         history = historical_data.copy()
-        future = forecast_data.copy()
+        future = future_static_data.copy()
         history["date"] = pd.to_datetime(history["date"])
         future["date"] = pd.to_datetime(future["date"])
         history = history.sort_values(["item_id", "date"])
@@ -463,13 +456,13 @@ class BacktestEngine:
 
         # Price features depend on preceding known prices.  Build them on the
         # contiguous history + future frame, then split before model fitting.
-        enriched = self.feature_builder.add_price_features(
-            pd.concat([history, future], ignore_index=True).sort_values(["item_id", "date"])
-        )
-        calibration_train = enriched[enriched["date"] < calibration_start].copy()
-        calibration_eval = enriched[enriched["date"].isin(calibration_dates)].copy()
-        final_train = enriched[enriched["date"].isin(history_dates)].copy()
-        final_forecast = enriched[enriched["date"].isin(forecast_dates)].copy()
+        price_data = self.feature_builder.add_price_features(
+            pd.concat([history, future], ignore_index=True).sort_values(["item_id", "date"]))
+
+        calibration_train = price_data[price_data["date"] < calibration_start].copy()
+        calibration_eval = price_data[price_data["date"].isin(calibration_dates)].copy()
+        final_train = price_data[price_data["date"].isin(history_dates)].copy()
+        final_forecast = price_data[price_data["date"].isin(forecast_dates)].copy()
 
         def build_training_frame(raw_train: pd.DataFrame) -> pd.DataFrame:
             frame = self.feature_builder.build(
@@ -479,7 +472,7 @@ class BacktestEngine:
                 max_windows=[7, 28, 60, 90],
                 rolling_on_lags=[28],
             )
-            missing = [col for col in feats + ["sales"] if col not in frame.columns]
+            missing = [col for col in self.feature_names + ["sales"] if col not in frame.columns]
             if missing:
                 raise ValueError(f"Deployment training frame missing expected features: {missing}")
             return frame
@@ -487,21 +480,22 @@ class BacktestEngine:
         # Calibration: fit before the observed calibration period and estimate
         # safety-stock uncertainty from the resulting out-of-sample errors.
         calibration_train_features = build_training_frame(calibration_train)
-        self.model.fit(calibration_train_features[feats], calibration_train_features["sales"])
+        self.model.fit(calibration_train_features[self.feature_names], calibration_train_features["sales"])
         calibration_predictions = self.forecaster.recursive_forecaster(
             calibration_train_features, calibration_eval
         )
+        # for debugging purpose, calculate metrics on caliberation data
         calibration_metrics = get_all_metrics(
             calibration_train_features, calibration_eval, calibration_predictions
         )
+        ## computing rolling tau error on this inner split data
         calibration_error = compute_rolling_tau_error(
             calibration_eval, calibration_predictions, tau=self.tau_days
         )
-
         # Final fit: the calibration actuals are now known history, so include
         # them before producing the production forecast.
         final_train_features = build_training_frame(final_train)
-        self.model.fit(final_train_features[feats], final_train_features["sales"])
+        self.model.fit(final_train_features[self.feature_names], final_train_features["sales"])
         production_predictions = self.forecaster.recursive_forecaster(
             final_train_features, final_forecast
         )
@@ -528,7 +522,7 @@ class BacktestEngine:
             inventory_costs=inventory["costs"],
             inventory_cost_summary=inventory["cost_summary"],
             error_statistics=inventory["error_statistics"],
-        )
+        )  
 
     def get_last_predictions(self) -> dict[str, Any] | None:
         """Returns the actuals and model predictions from the most recently executed window."""
