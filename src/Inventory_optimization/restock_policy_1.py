@@ -51,7 +51,7 @@ def calculate_error_statistics(df_with_error: pd.DataFrame) -> pd.DataFrame:
 
 
 def generate_inventory_policy(df: pd.DataFrame, error_stats: pd.DataFrame, lead_time: int = 4, review_period: int = 7, k_factor: float = 1.645, pred_col: str = "sales_pred",
-    sales_col: str = "sales") -> pd.DataFrame:
+    sales_col: str = "sales", demand_history: pd.DataFrame | None = None) -> pd.DataFrame:
     """Generates Order-Up-To levels and Safety Stock buffers comparing RMSE, MAE,
 
     and Classical baselines.
@@ -70,7 +70,14 @@ def generate_inventory_policy(df: pd.DataFrame, error_stats: pd.DataFrame, lead_
     policy["order_up_to_mae"] = ( policy["forecast_tau"] + policy["safety_stock_mae"] )
 
     # Classical baseline comparison (Standard deviation over lead time)
-    raw_std = df.groupby("item_id")[sales_col].std().rename("raw_demand_std")
+    # Future production rows do not have observed sales yet.  Use historical demand
+    # for the classical-demand variability estimate in that case.
+    demand_source = demand_history if demand_history is not None else df
+    if sales_col not in demand_source.columns:
+        raise ValueError(
+            f"demand_history must contain '{sales_col}' when generating a production policy."
+        )
+    raw_std = demand_source.groupby("item_id", observed=True)[sales_col].std().rename("raw_demand_std")
     policy = policy.merge(raw_std, on="item_id")
     policy["safety_stock_classical"] = (
         k_factor * policy["raw_demand_std"] * np.sqrt(tau)
@@ -114,13 +121,16 @@ def calculate_inventory_costs(df: pd.DataFrame,
     return policy_cost
 
 
-def run_inventory_pipeline(current_raw:pd.DataFrame,
+def run_inventory_pipeline(current_raw: pd.DataFrame | None,
                            current_forecast: pd.DataFrame,
-                           oos_error : list|None=None,
+                           oos_error: pd.DataFrame | None = None,
                            review_period:int=7,lead_time:int=4,
-                           holding_cost_per_unit:int=0.02)->pd.DataFrame:
+                           holding_cost_per_unit:int=0.02,
+                           demand_history: pd.DataFrame | None = None,
+                           return_details: bool = False) -> pd.Series | dict[str, pd.DataFrame | pd.Series]:
     '''
-    current_raw: current raw sales
+    current_raw: current raw sales. Optional for production forecasting, where
+        future actual demand is not available yet.
     current_forecast: current forecasted sales
     oos_raw : previous month raw sales
     oos_predict: previous month predicted sales (to calculate error deviation)
@@ -128,43 +138,62 @@ def run_inventory_pipeline(current_raw:pd.DataFrame,
     lead_time   : lead time,
     holding_cost_per_unit: fixed, can try different
     '''
+    if oos_error is None:
+        raise ValueError("oos_error is required to estimate safety stock.")
+    if current_forecast.empty:
+        raise ValueError("current_forecast must contain at least one forecast row.")
+
     tau = lead_time + review_period
     horizon = current_forecast['date'].nunique()
-
-    forecast_origin = current_forecast['date'].min()
+    initial_forecast_origin = current_forecast['date'].min()
 
     ##### if oos_error is not empty, then run the pipeline ##########
     full_policy = []
     full_cost  = []
 
-    if oos_error is not None:
+    # 1. Estimate demand uncertainty from the already observed calibration period.
+    historical_error_stats = calculate_error_statistics(oos_error)
+    if historical_error_stats.empty:
+        raise ValueError("oos_error contains no complete tau-day error observations.")
 
-        ## 1. calculate the error stats per item
-        historical_error_stats = calculate_error_statistics(oos_error)
+    # 2. Create a new order-up-to decision every review period.  The protection
+    # horizon is tau days, but decisions advance by review_period days.
+    for review_offset in range(0, horizon, review_period):
+        forecast_origin = initial_forecast_origin + pd.Timedelta(days=review_offset)
+        risk_period_end = forecast_origin + pd.Timedelta(days=tau - 1)
+        risk_period_forecast = current_forecast[
+            current_forecast['date'].between(forecast_origin, risk_period_end)
+        ].copy()
+        # An order-up-to level protects demand across the full tau horizon.  Do
+        # not emit a final partial-horizon decision simply because an offline
+        # stress-test extract ends before that protection period does.
+        if risk_period_forecast.empty or risk_period_forecast['date'].nunique() < tau:
+            continue
 
-        ### reorder every review days
-        for risk_period in range(0,horizon,review_period):
-            risk_period_end = forecast_origin + pd.Timedelta(days=tau)
-            # split the actual vs demand to calculate inventory for the risk periods only
-            risk_period_forecast = current_forecast[current_forecast['date'].between(forecast_origin,risk_period_end)].copy()
-            risk_period_actual = current_raw[current_raw['date'].between(forecast_origin,risk_period_end)].copy()
+        policy_risk_period = generate_inventory_policy(
+            risk_period_forecast,
+            historical_error_stats,
+            lead_time=lead_time,
+            review_period=review_period,
+            demand_history=demand_history if demand_history is not None else current_raw,
+        )
+        policy_risk_period["review_date"] = forecast_origin
+        policy_risk_period["protection_end_date"] = risk_period_end
 
-            merged_riskperiod = risk_period_actual.merge(risk_period_forecast,on=['item_id','date'],how='inner')
-            # generate policy per risk period
-            policy_risk_period = generate_inventory_policy(merged_riskperiod,
-                                                           historical_error_stats,
-                                                           lead_time=lead_time,
-                                                           review_period=review_period,
-                                                           )
+        inventory_cost_per_risk_period = calculate_inventory_costs(
+            df=risk_period_forecast,
+            policy=policy_risk_period,
+            review_period=review_period,
+            holding_cost_per_unit_day=holding_cost_per_unit,
+        )
+        inventory_cost_per_risk_period["review_date"] = forecast_origin
+        full_policy.append(policy_risk_period)
+        full_cost.append(inventory_cost_per_risk_period)
 
-            inventory_cost_per_risk_period = calculate_inventory_costs(df=merged_riskperiod,
-                                                                       policy=policy_risk_period,
-                                                                       review_period=review_period,
-                                                                       holding_cost_per_unit_day=0.02)
+    if not full_cost:
+        raise ValueError("No inventory policy could be generated for the forecast horizon.")
 
-            full_policy.append(policy_risk_period)
-            full_cost.append(inventory_cost_per_risk_period)
-
+    policy = pd.concat(full_policy, ignore_index=True)
     cost = pd.concat(full_cost,ignore_index=True)
 
     cost_cols = ['monthly_holding_cost_mae','monthly_holding_cost_classical','monthly_holding_cost_rmse']
@@ -172,4 +201,11 @@ def run_inventory_pipeline(current_raw:pd.DataFrame,
     total_cost = cost[cost_cols].sum()
 
 
+    if return_details:
+        return {
+            "policy": policy,
+            "costs": cost,
+            "cost_summary": total_cost,
+            "error_statistics": historical_error_stats,
+        }
     return total_cost

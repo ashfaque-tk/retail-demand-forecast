@@ -11,7 +11,9 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import logging
+import os
 from pathlib import Path
+import pickle
 import time
 from typing import Any
 
@@ -19,7 +21,8 @@ import numpy as np
 import pandas as pd
 
 from config import PIPELINE_CONFIG
-from src.backtest_engine import BacktestEngine, WindowResult
+from src.backtest_engine import BacktestEngine, DeploymentResult, WindowResult
+from src.deployment_repository import persist_deployment
 from src.features import FeatureBuilder
 from src.models_train import SelectModel
 from src.recursive_model import Forecaster
@@ -37,6 +40,7 @@ TEST_PATH = PIPELINE_CONFIG["test_data_path"]
 FEATURE_PATH = PIPELINE_CONFIG["final_feature_set"]
 RESULTS_DIR = Path(PIPELINE_CONFIG["results_dir"])
 EXPERIMENTS_LOG_PATH = RESULTS_DIR / "Experiments/Experiments.json"
+DEPLOYMENT_DIR = Path(PIPELINE_CONFIG.get("deployment_dir", MODELS_DIR / "deployments"))
 
 RUN = PIPELINE_CONFIG.get("run", "Experiment")
 MODEL_NAME = PIPELINE_CONFIG.get("model", "lgbm")
@@ -117,7 +121,58 @@ def run_backtest_window(
     return res.metric_rows, res.fva_rows
 
 
-def main() -> tuple[pd.DataFrame, pd.DataFrame, list[WindowResult]]:
+def _build_engine(full_features: list[str]) -> BacktestEngine:
+    """Construct the shared forecasting/inventory engine for either run mode."""
+    return BacktestEngine(
+        model_name=MODEL_NAME,
+        training_window_days=TRAINING_WINDOW,
+        horizon_days=HORIZON,
+        backtest_mode=BACKTEST_TYPE,
+        step_size_days=28,
+        categorical_cols=CATEGORICAL_COLS,
+        feature_names=full_features,
+        lead_time_days=PIPELINE_CONFIG.get("lead_time", 4),
+        review_period_days=PIPELINE_CONFIG.get("review_period", 7),
+        holding_cost_rate=PIPELINE_CONFIG.get("holding_cost_rate", 0.02),
+        min_history_days=100,
+        max_windows=MAX_WINDOWS,
+    )
+
+
+def _save_deployment_artifacts(
+    deployment: DeploymentResult, engine: BacktestEngine, deployment_id: str
+) -> Path:
+    """Persist the fitted model and deployable forecast/policy outputs together."""
+    artifact_dir = DEPLOYMENT_DIR / deployment_id
+    artifact_dir.mkdir(parents=True, exist_ok=False)
+
+    with open(artifact_dir / "model.pkl", "wb") as f:
+        pickle.dump(engine.model, f)
+
+    deployment.forecasts.to_parquet(artifact_dir / "forecasts.parquet", index=False)
+    deployment.inventory_policy.to_parquet(artifact_dir / "inventory_policy.parquet", index=False)
+    deployment.inventory_costs.to_parquet(artifact_dir / "inventory_costs.parquet", index=False)
+    deployment.error_statistics.to_parquet(artifact_dir / "error_statistics.parquet", index=False)
+
+    manifest = {
+        "deployment_id": deployment_id,
+        "created_at": datetime.now(),
+        "model": MODEL_NAME,
+        "training_window_days": TRAINING_WINDOW,
+        "calibration_start": deployment.calibration_start,
+        "calibration_end": deployment.calibration_end,
+        "forecast_start": deployment.forecast_start,
+        "forecast_end": deployment.forecast_end,
+        "calibration_metrics": deployment.calibration_metrics,
+        "inventory_cost_summary": deployment.inventory_cost_summary,
+        "features": engine.feature_names,
+    }
+    with open(artifact_dir / "manifest.json", "w", encoding="utf-8") as f:
+        json.dump(_json_safe(manifest), f, indent=2)
+    return artifact_dir
+
+
+def main() -> tuple[pd.DataFrame, pd.DataFrame, list[WindowResult]] | DeploymentResult:
     """Executes the end-to-end retail forecasting and inventory optimization pipeline."""
     start_time = time.time()
 
@@ -140,27 +195,62 @@ def main() -> tuple[pd.DataFrame, pd.DataFrame, list[WindowResult]]:
     full_features = list(pd.read_pickle(FEATURE_PATH))
     logger.info("Loaded feature schema: %d total features", len(full_features))
 
+    engine = _build_engine(full_features)
+
+    if RUN == "Deploy":
+        database_url = PIPELINE_CONFIG.get("database_url") or os.environ.get("DATABASE_URL")
+        if not database_url:
+            raise RuntimeError(
+                "Deploy requires DATABASE_URL (environment variable or PIPELINE_CONFIG['database_url']) "
+                "so deployment artifacts are persisted to PostgreSQL."
+            )
+        history_dates = pd.Index(train_df["date"].drop_duplicates().sort_values())
+        if len(history_dates) < TRAINING_WINDOW:
+            raise ValueError(
+                f"Deploy requires {TRAINING_WINDOW} historical dates; found {len(history_dates)}."
+            )
+        forecast_dates = pd.Index(test_df["date"].drop_duplicates().sort_values())
+        if len(forecast_dates) < HORIZON:
+            raise ValueError(f"Deploy requires {HORIZON} future dates; found {len(forecast_dates)}.")
+
+        # Only the latest known training window and first production horizon
+        # participate in deployment.  Remaining test dates may be used later for
+        # offline stress tests, but must not affect today's decision.
+        final_train = train_df[train_df["date"].isin(history_dates[-TRAINING_WINDOW:])].copy()
+        final_test = test_df[test_df["date"].isin(forecast_dates[:HORIZON])].copy()
+        logger.info(
+            "[2/3] Deploying with %d historical days and %d forecast days.",
+            TRAINING_WINDOW,
+            HORIZON,
+        )
+        deployment = engine.run_deploy(
+            historical_data=final_train,
+            forecast_data=final_test,
+            feature_names=full_features,
+            calibration_days=HORIZON,
+        )
+        deployment_id = PIPELINE_CONFIG.get("deployment_name", f"deployment_{int(time.time())}")
+        persist_deployment(
+            database_url=database_url,
+            deployment_id=deployment_id,
+            deployment=deployment,
+            final_train=final_train,
+            forecast_input=final_test,
+            model_name=MODEL_NAME,
+            training_window_days=TRAINING_WINDOW,
+            lead_time_days=engine.lead_time_days,
+            review_period_days=engine.review_period_days,
+            config=PIPELINE_CONFIG,
+        )
+        artifact_dir = _save_deployment_artifacts(deployment, engine, deployment_id)
+        logger.info("[3/3] Deployment persisted to PostgreSQL and artifacts saved to %s", artifact_dir)
+        return deployment
+
     if RUN != "Experiment":
-        logger.info("RUN mode '%s' completed without backtesting.", RUN)
-        return pd.DataFrame(), pd.DataFrame(), []
+        raise ValueError("PIPELINE_CONFIG['run'] must be either 'Experiment' or 'Deploy'.")
 
     # Step 2: Initialize BacktestEngine and execute walk-forward windows
     logger.info("[2/3] Initializing BacktestEngine (mode=%s, horizon=%d days)...", BACKTEST_TYPE, HORIZON)
-    engine = BacktestEngine(
-        model_name=MODEL_NAME,
-        training_window_days=TRAINING_WINDOW,
-        horizon_days=HORIZON,
-        backtest_mode=BACKTEST_TYPE,
-        step_size_days=28,
-        categorical_cols=CATEGORICAL_COLS,
-        feature_names=full_features,
-        lead_time_days=PIPELINE_CONFIG.get("lead_time", 4),
-        review_period_days=PIPELINE_CONFIG.get("review_period", 7),
-        holding_cost_rate=PIPELINE_CONFIG.get("holding_cost_rate", 0.02),
-        min_history_days=100,
-        max_windows=MAX_WINDOWS,
-    )
-
     metrics_df, fva_df, window_results = engine.run_all(full_data=train_df)
 
     # Step 3: Log experiment results

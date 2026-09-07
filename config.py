@@ -18,9 +18,10 @@ PIPELINE_CONFIG = {
     "final_feature_set":str(MODELS_DIR / "final_features_ca1.pkl"),
 
     "results_dir"   : str(BASE_DIR/'results'),
+    "deployment_dir": str(MODELS_DIR / "deployments"),
     "note"  : "Inventory Cost formulation with items having full history ",
     "lead_time" : 4,
-    'review_peiod': 7,
+    "review_period": 7,
     
 }
 
