@@ -138,7 +138,7 @@ def run_backtest_window(
 
 def _save_deployment_artifacts(deployment: DeploymentResult, engine: BacktestEngine) -> Path:
     """Persist the fitted model and deployable forecast/policy outputs together."""
-    deployment_id = PIPELINE_CONFIG.get("deployment_name", f"deployment_{int(time.time())}")
+    deployment_id = PIPELINE_CONFIG.get("deployment_name") or f"deployment_{int(time.time())}"
     artifact_dir = DEPLOYMENT_DIR / deployment_id
     artifact_dir.mkdir(parents=True, exist_ok=False)
 
@@ -149,6 +149,52 @@ def _save_deployment_artifacts(deployment: DeploymentResult, engine: BacktestEng
     deployment.inventory_policy.to_parquet(artifact_dir / "inventory_policy.parquet", index=False)
     deployment.inventory_costs.to_parquet(artifact_dir / "inventory_costs.parquet", index=False)
     deployment.error_statistics.to_parquet(artifact_dir / "error_statistics.parquet", index=False)
+
+    # Comparison artifacts are always written in long format.  With the baseline
+    # flag disabled, these contain the selected model only and retain one schema.
+    def combine(attribute: str) -> pd.DataFrame:
+        return pd.concat(
+            [getattr(result, attribute).assign(model=model_name)
+             for model_name, result in deployment.model_results.items()],
+            ignore_index=True,
+        )
+
+    # Baseline helpers include ``real_sales`` while the recursive ML forecaster
+    # correctly returns predictions only.  Merge one canonical actual-sales
+    # column so every model has the same plotting schema.
+    actuals_for_merge = deployment.test_actuals[["item_id", "dept_id", "cat_id", "date", "sales"]].rename(
+        columns={"sales": "actual_sales"}
+    )
+    forecast_comparison = combine("forecasts").drop(columns=["real_sales"], errors="ignore").merge(
+        actuals_for_merge,
+        on=["item_id", "dept_id", "cat_id", "date"],
+        how="left",
+        validate="many_to_one",
+    )
+    forecast_comparison.to_parquet(artifact_dir / "forecast_comparison.parquet", index=False)
+    combine("calibration_predictions").to_parquet(
+        artifact_dir / "calibration_forecast_comparison.parquet", index=False
+    )
+    combine("inventory_policy").to_parquet(
+        artifact_dir / "inventory_policy_comparison.parquet", index=False
+    )
+    combine("inventory_costs").to_parquet(
+        artifact_dir / "inventory_cost_comparison.parquet", index=False
+    )
+    deployment.test_actuals.to_parquet(artifact_dir / "test_actuals.parquet", index=False)
+    pd.DataFrame([
+        {"model": model_name, **result.calibration_metrics}
+        for model_name, result in deployment.model_results.items()
+    ]).to_parquet(artifact_dir / "calibration_metrics_by_model.parquet", index=False)
+    test_metric_rows = [
+        {"model": model_name, **result.test_metrics}
+        for model_name, result in deployment.model_results.items()
+        if result.test_metrics is not None
+    ]
+    if test_metric_rows:
+        pd.DataFrame(test_metric_rows).to_parquet(
+            artifact_dir / "test_metrics_by_model.parquet", index=False
+        )
 
     manifest = {
         "deployment_id": deployment_id,
@@ -161,6 +207,7 @@ def _save_deployment_artifacts(deployment: DeploymentResult, engine: BacktestEng
         "forecast_end": deployment.forecast_end,
         "calibration_metrics": deployment.calibration_metrics,
         "inventory_cost_summary": deployment.inventory_cost_summary,
+        "evaluation_models": list(deployment.model_results),
         "features": engine.feature_names,
     }
     with open(artifact_dir / "manifest.json", "w", encoding="utf-8") as f:
@@ -168,7 +215,7 @@ def _save_deployment_artifacts(deployment: DeploymentResult, engine: BacktestEng
     return artifact_dir
 
 
-def main() -> tuple[pd.DataFrame, pd.DataFrame, list[WindowResult]]:
+def main() -> tuple[pd.DataFrame, pd.DataFrame, list[WindowResult]] | DeploymentResult:
     """Executes the end-to-end retail forecasting and inventory optimization pipeline."""
     start_time = time.time()
 
@@ -220,6 +267,7 @@ def main() -> tuple[pd.DataFrame, pd.DataFrame, list[WindowResult]]:
             historical_data=final_train,
             future_static_data=final_test,
             calibration_days=HORIZON,
+            evaluate_baselines=PIPELINE_CONFIG.get("deployment_evaluate_baselines", False),
         )
         artifact_dir = _save_deployment_artifacts(deployment, engine)
         logger.info("[3/3] Deployment artifacts saved to %s", artifact_dir)

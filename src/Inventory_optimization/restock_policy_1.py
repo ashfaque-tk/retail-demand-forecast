@@ -99,9 +99,10 @@ def calculate_inventory_costs(df: pd.DataFrame,
                               holding_cost_per_unit_day: float = 0.02, 
                               pred_col: str = "sales_pred") -> pd.DataFrame:
     
-    """Calculates cycle stock, average on-hand inventory, and monthly holding costs
+    """Estimate holding cost for one review period from policy-implied inventory.
 
-    across policy methods.
+    This is an analytical estimate based on forecast cycle demand and safety stock;
+    it is not a day-by-day inventory simulation using realised demand.
     """
     cycle_demand_r = ( df.sort_values("date").groupby("item_id").tail(review_period).groupby("item_id")[pred_col].sum().rename("cycle_demand_R"))
 
@@ -115,7 +116,7 @@ def calculate_inventory_costs(df: pd.DataFrame,
         policy_cost[f"monthly_holding_cost_{method}"] = (
             policy_cost[f"avg_on_hand_{method}"]
             * holding_cost_per_unit_day
-            * 7
+            * review_period
         )
 
     return policy_cost

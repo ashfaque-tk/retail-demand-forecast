@@ -32,9 +32,9 @@ def _extract_series(data: pd.Series | pd.DataFrame, value_col: str = "sales", da
 def plot_item_forecast_and_inventory(
     raw_sales: pd.Series | pd.DataFrame,
     forecasted_demand: Mapping[str, pd.Series] | pd.Series | pd.DataFrame,
-    p10: pd.Series,
-    p90: pd.Series,
-    inventory_values: Mapping[str, pd.Series | float | int],
+    p10: pd.Series | pd.DataFrame | None = None,
+    p90: pd.Series | pd.DataFrame | None = None,
+    inventory_values: Mapping[str, pd.Series | float | int] | None = None,
     p95: pd.Series | None = None,
     item_id: str | None = None,
     sales_as_bars: bool = True,
@@ -106,36 +106,22 @@ def plot_item_forecast_and_inventory(
             )
         )
 
-    # 3. Add Quantile Prediction Band (P10 -> P90 shaded confidence area)
-    p10_series = _extract_series(p10, value_col="p10")
-    p90_series = _extract_series(p90, value_col="p90")
-    forecast_dates = p10_series.index
-
-    # P10 lower boundary (transparent line)
-    fig.add_trace(
-        go.Scatter(
-            x=forecast_dates,
-            y=p10_series.values,
-            mode="lines",
-            line=dict(width=0),
-            showlegend=False,
-            hoverinfo="skip",
-        )
-    )
-
-    # P90 upper boundary filled to P10
-    fig.add_trace(
-        go.Scatter(
-            x=forecast_dates,
-            y=p90_series.values,
-            mode="lines",
-            line=dict(width=0),
-            fill="tonexty",
-            fillcolor="rgba(2, 132, 199, 0.15)",
+    # 3. Add optional quantile prediction band (P10 -> P90).
+    forecast_dates = None
+    if p10 is not None and p90 is not None:
+        p10_series = _extract_series(p10, value_col="p10")
+        p90_series = _extract_series(p90, value_col="p90")
+        forecast_dates = p10_series.index
+        fig.add_trace(go.Scatter(
+            x=forecast_dates, y=p10_series.values, mode="lines", line=dict(width=0),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=forecast_dates, y=p90_series.values, mode="lines", line=dict(width=0),
+            fill="tonexty", fillcolor="rgba(2, 132, 199, 0.15)",
             name="80% Forecast Bound (P10–P90)",
             hovertemplate="<b>80% Interval</b><br>Upper (P90): %{y:.1f}<extra></extra>",
-        )
-    )
+        ))
 
     # Optional P95 Upper Bound
     if p95 is not None:
@@ -171,6 +157,9 @@ def plot_item_forecast_and_inventory(
     elif isinstance(forecasted_demand, pd.Series):
         models_dict[forecasted_demand.name or "Model Forecast"] = _extract_series(forecasted_demand)
 
+    if forecast_dates is None and models_dict:
+        forecast_dates = next(iter(models_dict.values())).index
+
     for i, (m_name, m_series) in enumerate(models_dict.items()):
         norm_key = m_name.lower().replace(" ", "_")
         matched_style = None
@@ -202,7 +191,7 @@ def plot_item_forecast_and_inventory(
         {"color": "#ef4444", "dash": "dash", "width": 2.5, "symbol": "square"},
     ]
 
-    for idx, (p_name, p_val) in enumerate(inventory_values.items()):
+    for idx, (p_name, p_val) in enumerate((inventory_values or {}).items()):
         style = policy_styles[idx % len(policy_styles)]
         # If policy value is a time series
         if isinstance(p_val, (pd.Series, pd.DataFrame)):
@@ -218,7 +207,7 @@ def plot_item_forecast_and_inventory(
                 )
             )
         # If policy value is a scalar threshold across the horizon
-        elif isinstance(p_val, (int, float, np.number)):
+        elif isinstance(p_val, (int, float, np.number)) and forecast_dates is not None:
             fig.add_trace(
                 go.Scatter(
                     x=[forecast_dates.min(), forecast_dates.max()],

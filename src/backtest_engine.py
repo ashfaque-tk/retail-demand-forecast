@@ -30,6 +30,7 @@ from src.metrics import fva, get_all_metrics
 from src.models_train import SelectModel
 from src.recursive_model import Forecaster
 from src.utils import get_items_with_min_history
+from config import PIPELINE_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,22 @@ class DeploymentResult:
     forecast_start: pd.Timestamp
     forecast_end: pd.Timestamp
     calibration_metrics: dict[str, float]
+    calibration_predictions: pd.DataFrame
+    forecasts: pd.DataFrame
+    inventory_policy: pd.DataFrame
+    inventory_costs: pd.DataFrame
+    inventory_cost_summary: pd.Series
+    error_statistics: pd.DataFrame
+    test_actuals: pd.DataFrame
+    model_results: dict[str, "ModelDeploymentResult"]
+
+
+@dataclass
+class ModelDeploymentResult:
+    """Forecast, calibration, and inventory artifacts for one candidate model."""
+
+    calibration_metrics: dict[str, float]
+    test_metrics: dict[str, float] | None
     calibration_predictions: pd.DataFrame
     forecasts: pd.DataFrame
     inventory_policy: pd.DataFrame
@@ -152,9 +169,10 @@ class BacktestEngine:
 
         # Core pipeline components
         self.feature_builder = FeatureBuilder()
+        quantiles = PIPELINE_CONFIG.get("quantiles") or None # returns a list of quantiles that we want find
         self.model = SelectModel(
             model=self.model_name,
-            quantiles=None,
+            quantiles= quantiles,
             use_log_transform=self.use_log_transform,
             categorical_cols=self.categorical_cols,
         )
@@ -413,10 +431,10 @@ class BacktestEngine:
 
         return metrics_df, fva_df, window_results
 
-    def run_deploy(self, historical_data:pd.DataFrame, 
+    def run_deploy(self, historical_data:pd.DataFrame,
                    future_static_data:pd.DataFrame,
                    calibration_days:int|None=None,
-                   quantiles:bool=False):
+                   evaluate_baselines: bool = False) -> DeploymentResult:
         
         '''Fit a final model and create production inventory decisions.
 
@@ -424,6 +442,7 @@ class BacktestEngine:
         to estimate the tau-day forecast-error distribution.  After calibration,
         the model is deliberately refit on *all* historical data before forecasting
         ``forecast_data``.  Future actual sales are not required for this method.'''
+        calibration_days = calibration_days or self.horizon_days
         if calibration_days < self.tau_days:
             raise ValueError(
                 f"calibration_days ({calibration_days}) must be at least tau_days ({self.tau_days})."
@@ -499,29 +518,89 @@ class BacktestEngine:
         production_predictions = self.forecaster.recursive_forecaster(
             final_train_features, final_forecast
         )
-        inventory = run_inventory_pipeline(
-            current_raw=None,
-            current_forecast=production_predictions,
-            oos_error=calibration_error,
-            review_period=self.review_period_days,
-            lead_time=self.lead_time_days,
-            holding_cost_per_unit=self.holding_cost_rate,
-            demand_history=final_train,
-            return_details=True,
-        )
+        known_test_actuals = "sales" in future.columns and future["sales"].notna().all()
+        if evaluate_baselines and not known_test_actuals:
+            raise ValueError(
+                "evaluate_baselines=True requires known future 'sales' to calculate test metrics."
+            )
+
+        def inventory_result(
+            calibration_preds: pd.DataFrame,
+            calibration_metrics: dict[str, float],
+            test_metrics: dict[str, float] | None,
+            calibration_error: pd.DataFrame,
+            production_preds: pd.DataFrame,
+        ) -> ModelDeploymentResult:
+            inventory = run_inventory_pipeline(
+                current_raw=None,
+                current_forecast=production_preds,
+                oos_error=calibration_error,
+                review_period=self.review_period_days,
+                lead_time=self.lead_time_days,
+                holding_cost_per_unit=self.holding_cost_rate,
+                demand_history=final_train,
+                return_details=True,
+            )
+            return ModelDeploymentResult(
+                calibration_metrics=calibration_metrics,
+                test_metrics=test_metrics,
+                calibration_predictions=calibration_preds,
+                forecasts=production_preds,
+                inventory_policy=inventory["policy"],
+                inventory_costs=inventory["costs"],
+                inventory_cost_summary=inventory["cost_summary"],
+                error_statistics=inventory["error_statistics"],
+            )
+
+        model_results = {
+            self.model_name: inventory_result(
+                calibration_predictions,
+                calibration_metrics,
+                get_all_metrics(final_train_features, final_forecast, production_predictions)
+                if known_test_actuals else None,
+                calibration_error,
+                production_predictions,
+            )
+        }
+
+        if evaluate_baselines:
+            baseline_builders = {
+                "moving_average": lambda train, target: simple_moving_average(train, target, window_days=180),
+                "seasonal_naive": seasonal_naive,
+            }
+            for baseline_name, baseline_forecast in baseline_builders.items():
+                baseline_calibration = baseline_forecast(calibration_train, calibration_eval)
+                baseline_metrics = get_all_metrics(
+                    calibration_train, calibration_eval, baseline_calibration
+                )
+                baseline_error = compute_rolling_tau_error(
+                    calibration_eval, baseline_calibration, tau=self.tau_days
+                )
+                baseline_production = baseline_forecast(final_train, final_forecast)
+                model_results[baseline_name] = inventory_result(
+                    baseline_calibration,
+                    baseline_metrics,
+                    get_all_metrics(final_train, final_forecast, baseline_production),
+                    baseline_error,
+                    baseline_production,
+                )
+
+        selected_result = model_results[self.model_name]
 
         return DeploymentResult(
             calibration_start=calibration_start,
             calibration_end=calibration_end,
             forecast_start=pd.Timestamp(forecast_dates[0]),
             forecast_end=pd.Timestamp(forecast_dates[-1]),
-            calibration_metrics=calibration_metrics,
-            calibration_predictions=calibration_predictions,
-            forecasts=production_predictions,
-            inventory_policy=inventory["policy"],
-            inventory_costs=inventory["costs"],
-            inventory_cost_summary=inventory["cost_summary"],
-            error_statistics=inventory["error_statistics"],
+            calibration_metrics=selected_result.calibration_metrics,
+            calibration_predictions=selected_result.calibration_predictions,
+            forecasts=selected_result.forecasts,
+            inventory_policy=selected_result.inventory_policy,
+            inventory_costs=selected_result.inventory_costs,
+            inventory_cost_summary=selected_result.inventory_cost_summary,
+            error_statistics=selected_result.error_statistics,
+            test_actuals=future[["item_id", "dept_id", "cat_id", "date", "sales"]].copy(),
+            model_results=model_results,
         )  
 
     def get_last_predictions(self) -> dict[str, Any] | None:
