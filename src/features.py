@@ -11,10 +11,9 @@ import numpy as np
 import pandas as pd
 from typing import List,Dict
 
+import time 
 
 class FeatureBuilder():
-
-
 
     def __init__(self, col_names:dict = {'item_col':'item_id','dept_col':'dept_id','cat_col':'cat_id',
                                          'store_col':'store_id','state_col':'state_id','price_col':'sell_price',
@@ -186,6 +185,74 @@ class FeatureBuilder():
         next_day_dynamic_feats = hist_updated[hist_updated['date']==next_day['date'].unique()[0]]
 
         return next_day_dynamic_feats  # row[dynamic feats]
+
+
+    def _build_direct_train_frame(self,known_df:pd.DataFrame, target_known_cols:list[str],
+                                  original_feature_cols:list[str],horizon:int=28)-> tuple[pd.DataFrame,list]:
+        '''build a stacked direct-horizon training frame
+        known_df: train_df with one row per item,date with static calendar features and lag and rolling features already calculated
+        covariate_cols : column names like Snap_CA,is_event, renamed as target_snap_CA, target_is_event to assign
+        to target dates
+        horizon: forecast horizon '''
+        gaps = known_df.groupby(self.id_col,observed=True)[self.date_col].diff().dropna()
+
+        assert (gaps == pd.Timedelta(days=1)).all(),('date is not sequential, shift computed lag and rolling features'
+        'will missatribute dates')
+
+        t0 = time.time()
+
+        base = known_df.sort_values([self.id_col,self.date_col]).copy()
+
+
+        origin = base[[self.id_col,self.date_col,*original_feature_cols]].rename(columns={'date':'origin_date'})
+        targets = base[["item_id", "date", "sales", *target_known_cols]].rename(
+            columns={
+                "date": "target_date",
+                "sales": "target_sales",
+                **{col: f"target_{col}" for col in target_known_cols},
+            }
+        )
+        
+        frames = []
+
+        for h in range(1,horizon+1):
+            part = origin.copy()
+            part['horizon'] = h
+            part['target_date'] = part['origin_date']+pd.Timedelta(days=h)
+
+            # merge 
+            part = part.merge(targets,on=[self.id_col,'target_date'],how='inner',validate='many_to_one')
+      
+            frames.append(part)
+
+        direct_train = pd.concat(frames,ignore_index=True)
+
+        direct_feature_cols = [*original_feature_cols, "horizon", *[f"target_{col}" for col in target_known_cols]]
+
+        return direct_train, direct_feature_cols
+
+    def _build_direct_test_frame(self,future_df:pd.DataFrame,history_df:pd.DataFrame,original_feature_cols:list[str],
+                                 target_known_cols:list[str],max_horizon:int=28)->tuple[pd.DataFrame,list]:
+        '''future_df: test_data
+        history_df: train_data with full features including lag and rolling features'''
+        # One latest forecast origin per item.
+        origins = (
+            history_df.sort_values(["item_id", "date"])
+            .groupby("item_id", observed=True)
+            .tail(1)[["item_id", "date", *original_feature_cols]]
+            .rename(columns={"date": "origin_date"})
+        )
+
+        future = future_df[["item_id", "date", *target_known_cols]].rename(columns={"date": "target_date",
+            **{col: f"target_{col}" for col in target_known_cols},})
+        
+        prediction_frame = future.merge(origins, on="item_id", how="inner", validate="many_to_one")
+
+        prediction_frame["horizon"] = ( prediction_frame["target_date"] - prediction_frame["origin_date"]).dt.days
+
+        prediction_frame = prediction_frame.query("horizon >= 1 and horizon <= @max_horizon").copy()
+
+        return prediction_frame
 
 # ---------- calendar ----------
 
