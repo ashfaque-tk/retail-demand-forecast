@@ -1,7 +1,7 @@
 '''functions to return rolling and expanding windows for backtesting expts.'''
 
 import pandas as pd
-from typing import Dict
+from typing import Dict,Any
 
 
 def split_data(df:pd.DataFrame, start_date:pd.DatetimeIndex, end_date:pd.DatetimeIndex, forecast_horizon=28)->pd.DataFrame:
@@ -50,8 +50,53 @@ def generate_rolling_windows(df:pd.DataFrame, training_window:int=365, horizon:i
         })  
         window_id += 1
         current_train_start += pd.Timedelta(days=int(step_size))     
+
     return windows
 
+import pandas as pd
+
+def generate_rolling_windows_reversed(
+    df: pd.DataFrame,
+    training_window: int = 365,
+    horizon: int = 28,
+    step_size: int = 120,
+    date_col: str = 'date'
+) -> list[dict[str, Any]]:
+    """
+    Generates a list of fixed-size rolling window date ranges for walk-forward validation,
+    starting from the most recent date in the dataset (latest window = window_1).
+    """
+    min_date = df[date_col].min()
+    max_date = df[date_col].max()
+    
+    windows = []
+    window_id = 1
+    
+    # Start anchor at the latest available date
+    current_test_end = max_date
+    
+    while True:
+        test_start = current_test_end - pd.Timedelta(days=int(horizon))
+        train_end = test_start
+        train_start = train_end - pd.Timedelta(days=int(training_window))
+        
+        # Stop generating windows if training data extends before min_date
+        if train_start < min_date:
+            break
+            
+        windows.append({
+            'window_id': f"window_{window_id}",
+            'train_start': train_start,
+            'train_end': train_end,
+            'test_start': test_start,
+            'test_end': current_test_end
+        })
+        
+        window_id += 1
+        # Step back in time
+        current_test_end -= pd.Timedelta(days=int(step_size))
+        
+    return windows
 
 def generate_expanding_windows(df, training_window=365, horizon=28, step_size=120, date_col='date'):
     """

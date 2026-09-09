@@ -37,10 +37,11 @@ TRAIN_PATH = PIPELINE_CONFIG["train_data_path"]
 TEST_PATH = PIPELINE_CONFIG["test_data_path"]
 FEATURE_PATH = PIPELINE_CONFIG["final_feature_set"]
 RESULTS_DIR = Path(PIPELINE_CONFIG["results_dir"])
-EXPERIMENTS_LOG_PATH = RESULTS_DIR / "Experiments/Experiments.json"
+EXPERIMENTS_DIR = RESULTS_DIR / "Experiments"
 
 RUN = PIPELINE_CONFIG.get("run", "Experiment")
 MODEL_NAME = PIPELINE_CONFIG.get("model", "lgbm")
+FORECAST_TYPE = PIPELINE_CONFIG.get('forecast_type','recursive')
 TRAINING_WINDOW = PIPELINE_CONFIG.get("training_window", 730)
 HORIZON = PIPELINE_CONFIG.get("horizon_days", 28)
 BACKTEST_TYPE = PIPELINE_CONFIG.get("backtest_mode", "rolling")
@@ -48,6 +49,10 @@ CATEGORICAL_COLS = PIPELINE_CONFIG.get("categorical_cols", ["item_id", "cat_id",
 MAX_WINDOWS = PIPELINE_CONFIG.get("max_windows", 1)
 
 DEPLOYMENT_DIR = Path(PIPELINE_CONFIG.get("deployment_dir"))
+
+EXPERIMENT_FILENAME = MODEL_NAME+'_'+FORECAST_TYPE+'_'+str((int(TRAINING_WINDOW)/365))+'yr.json'
+EXPERIMENTS_LOG_PATH = EXPERIMENTS_DIR/EXPERIMENT_FILENAME
+
 
 def _json_safe(obj: Any) -> Any:
     """Recursively serializes pandas DataFrames, numpy types, and Timestamps for JSON logging."""
@@ -96,6 +101,7 @@ def _build_engine(full_features: list[str]) -> BacktestEngine:
     """Construct the shared forecasting/inventory engine for either run mode."""
     return BacktestEngine(
         model_name=MODEL_NAME,
+        forecast_type=FORECAST_TYPE,
         training_window_days=TRAINING_WINDOW,
         horizon_days=HORIZON,
         backtest_mode=BACKTEST_TYPE,
@@ -110,31 +116,31 @@ def _build_engine(full_features: list[str]) -> BacktestEngine:
     )
 
 
-def run_backtest_window(
-    window_id: int,
-    wnd: dict[str, Any],
-    train: pd.DataFrame,
-    full_features: list[str],
-    feat_builder: FeatureBuilder | None = None,
-    selected_models: SelectModel | None = None,
-    forecaster: Forecaster | None = None,
-    engine: BacktestEngine | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Compatibility wrapper executing a single backtest window via BacktestEngine."""
-    if engine is None:
-        engine = BacktestEngine(
-            model_name=MODEL_NAME,
-            training_window_days=TRAINING_WINDOW,
-            horizon_days=HORIZON,
-            backtest_mode=BACKTEST_TYPE,
-            categorical_cols=CATEGORICAL_COLS,
-            feature_names=full_features,
-            lead_time_days=PIPELINE_CONFIG.get("lead_time", 11),
-            review_period_days=PIPELINE_CONFIG.get("review_period", 7),
-            holding_cost_rate=PIPELINE_CONFIG.get("holding_cost_rate", 0.02),
-        )
-    res = engine.run_window(window_id=window_id, window_spec=wnd, full_data=train, feature_names=full_features)
-    return res.metric_rows, res.fva_rows
+# def run_backtest_window(
+#     window_id: int,
+#     wnd: dict[str, Any],
+#     train: pd.DataFrame,
+#     full_features: list[str],
+#     feat_builder: FeatureBuilder | None = None,
+#     selected_models: SelectModel | None = None,
+#     forecaster: Forecaster | None = None,
+#     engine: BacktestEngine | None = None,
+# ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+#     """Compatibility wrapper executing a single backtest window via BacktestEngine."""
+#     if engine is None:
+#         engine = BacktestEngine(
+#             model_name=MODEL_NAME,
+#             training_window_days=TRAINING_WINDOW,
+#             horizon_days=HORIZON,
+#             backtest_mode=BACKTEST_TYPE,
+#             categorical_cols=CATEGORICAL_COLS,
+#             feature_names=full_features,
+#             lead_time_days=PIPELINE_CONFIG.get("lead_time", 11),
+#             review_period_days=PIPELINE_CONFIG.get("review_period", 7),
+#             holding_cost_rate=PIPELINE_CONFIG.get("holding_cost_rate", 0.02),
+#         )
+#     res = engine.run_window(window_id=window_id, window_spec=wnd, full_data=train, feature_names=full_features)
+#     return res.metric_rows, res.fva_rows
 
 def _save_deployment_artifacts(deployment: DeploymentResult, engine: BacktestEngine) -> Path:
     """Persist the fitted model and deployable forecast/policy outputs together."""
@@ -222,13 +228,8 @@ def main() -> tuple[pd.DataFrame, pd.DataFrame, list[WindowResult]] | Deployment
     # Step 1: Load and filter datasets
     logger.info("[1/3] Loading dataset and feature configuration...")
     train_df = pd.read_parquet(TRAIN_PATH)
-    total_days = train_df["date"].nunique()
-
-    # Filter items with complete historical presence
-    train_df = get_items_with_min_history(train_df, min_history_days=total_days - 1).copy()
     test_df = pd.read_parquet(TEST_PATH)
-    test_df = test_df[test_df["item_id"].isin(train_df["item_id"])].copy()
-
+   
     logger.info(
         "Active SKUs with complete historical presence: Train=%d, Test=%d",
         train_df["item_id"].nunique(),
@@ -306,6 +307,7 @@ def main() -> tuple[pd.DataFrame, pd.DataFrame, list[WindowResult]] | Deployment
         "fva": fva_df,
         "Notes": PIPELINE_CONFIG.get("note"),
     }
+
     log_experiment_results(EXPERIMENTS_LOG_PATH, experiment_record)
 
     # Print summary tables

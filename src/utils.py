@@ -132,27 +132,9 @@ if __name__ == '__main__':
     print(train_stratified.columns,test_stratified.columns)
     # ### save this as our final set 
 
-    train_stratified.to_parquet(f'{data_dir}train_filtered_ca1.parquet')
-    test_stratified.to_parquet(f'{data_dir}test_filtered_ca1.parquet')
+    # train_stratified.to_parquet(f'{data_dir}train_filtered_ca1.parquet')
+    # test_stratified.to_parquet(f'{data_dir}test_filtered_ca1.parquet')
 
-    quit()
+    # quit()
 
-    from .features import FeatureBuilder
-
-    feats = FeatureBuilder()
-
-    
-
-    features = pd.read_pickle('models/final_features_ca1.pkl')
-
-    target_cols = ['snap_CA', 'is_event', 'is_event_in_7_days', 'day_of_week', 'month', 'sell_price','is_sporting_event',
-        'is_cultural_event', 'is_national_event', 'is_religious_event','day_of_month','weekday','week_of_year']
-    ##
-    features= []
-    train_direct_frame, feats_target = feats._build_direct_train_frame(train_stratified,
-                                                                       target_known_cols=target_cols,
-                                                                       original_feature_cols=features)
-    print(train_direct_frame.head(),feats_target)
-
-
-
+  

@@ -151,12 +151,14 @@ class FeatureBuilder():
             df = self.add_price_features(df)
         return df
 
-    def next_day_feature_build(self,history_df:pd.DataFrame, next_day_df:pd.DataFrame,dynamic_feats:dict[str,List[int]|None]={'lags':[7],
+    def build_next_day_features(self,history_df:pd.DataFrame, next_day_df:pd.DataFrame,dynamic_feats:dict[str,List[int]|None]={'lags':[7],
                                                                                                          'rolling_mean':[7,28,60,90],
                                                                                                          'rolling_max':[7,28,60,90],
                                                                                                          'rolling_on_lag':[28],
                                                                                                          }):
-        '''history_df: already cut off to recent 100 days, columns: ['item_id','date','sales']
+        '''
+        creating rolling and lag feats 
+        history_df: already cut off to recent 100 days, columns: ['item_id','date','sales']
         next_day_df: pd.DataFrame(['items':items,'date':date])
         return next_day_feats: pd.DataFrame with only dynamic features,'item_id','date'''
        
@@ -182,29 +184,35 @@ class FeatureBuilder():
 
         hist_updated = self.add_trend_features(hist_updated)
 
-        next_day_dynamic_feats = hist_updated[hist_updated['date']==next_day['date'].unique()[0]]
+        next_day_full_feats = hist_updated[hist_updated['date']==next_day['date'].unique()[0]]
 
-        return next_day_dynamic_feats  # row[dynamic feats]
+        return next_day_full_feats  # row[full_feats]
 
 
-    def _build_direct_train_frame(self,known_df:pd.DataFrame, target_known_cols:list[str],
-                                  original_feature_cols:list[str],horizon:int=28)-> tuple[pd.DataFrame,list]:
+
+
+class TrainTestPrepare():
+
+    """Formats features into train/test structures for different forecasting types
+    Mainly for Multi-horizon direct hybrid forecast"""
+
+    @staticmethod
+    def build_direct_train_frame(known_df:pd.DataFrame, target_known_cols:list[str],
+                                  original_feature_cols:list[str],horizon:int=28,
+                                  id_col:str='item_id',date_col:str='date',target_col:str='sales')-> tuple[pd.DataFrame,list]:
         '''build a stacked direct-horizon training frame
         known_df: train_df with one row per item,date with static calendar features and lag and rolling features already calculated
-        covariate_cols : column names like Snap_CA,is_event, renamed as target_snap_CA, target_is_event to assign
-        to target dates
+        target_known_cols: calendar events for target date like snap_CA,is_event(target_snap_CA,target_is_event)
         horizon: forecast horizon '''
-        gaps = known_df.groupby(self.id_col,observed=True)[self.date_col].diff().dropna()
+        gaps = known_df.groupby(id_col,observed=True)[date_col].diff().dropna()
 
         assert (gaps == pd.Timedelta(days=1)).all(),('date is not sequential, shift computed lag and rolling features'
         'will missatribute dates')
+        base = known_df.sort_values([id_col,date_col]).copy()
 
-        t0 = time.time()
-
-        base = known_df.sort_values([self.id_col,self.date_col]).copy()
-
-
-        origin = base[[self.id_col,self.date_col,*original_feature_cols]].rename(columns={'date':'origin_date'})
+        # rename the date as origin_date
+        origin = base[[date_col,*original_feature_cols]].rename(columns={'date':'origin_date'})#id col alread in feature_cols
+        # merge with targets with date renamed as target_date, on target_date
         targets = base[["item_id", "date", "sales", *target_known_cols]].rename(
             columns={
                 "date": "target_date",
@@ -221,17 +229,17 @@ class FeatureBuilder():
             part['target_date'] = part['origin_date']+pd.Timedelta(days=h)
 
             # merge 
-            part = part.merge(targets,on=[self.id_col,'target_date'],how='inner',validate='many_to_one')
+            part = part.merge(targets,on=[id_col,'target_date'],how='inner',validate='many_to_one')
       
             frames.append(part)
 
         direct_train = pd.concat(frames,ignore_index=True)
-
         direct_feature_cols = [*original_feature_cols, "horizon", *[f"target_{col}" for col in target_known_cols]]
 
         return direct_train, direct_feature_cols
 
-    def _build_direct_test_frame(self,future_df:pd.DataFrame,history_df:pd.DataFrame,original_feature_cols:list[str],
+    @staticmethod
+    def build_direct_test_frame(future_df:pd.DataFrame,history_df:pd.DataFrame,original_feature_cols:list[str],
                                  target_known_cols:list[str],max_horizon:int=28)->tuple[pd.DataFrame,list]:
         '''future_df: test_data
         history_df: train_data with full features including lag and rolling features'''
@@ -239,7 +247,7 @@ class FeatureBuilder():
         origins = (
             history_df.sort_values(["item_id", "date"])
             .groupby("item_id", observed=True)
-            .tail(1)[["item_id", "date", *original_feature_cols]]
+            .tail(1)[["date", *original_feature_cols]]
             .rename(columns={"date": "origin_date"})
         )
 
@@ -291,8 +299,8 @@ def add_calendar_features(cal_df: pd.DataFrame, date_col:str='date') -> pd.DataF
             direction='backward'
         )
         
-        cal["days_to_next_event"] = (cal['next_event_date'] - cal[date_col]).dt.days.fillna(7).clip(upper=7)
-        cal["days_since_last_event"] = (cal[date_col] - cal['prev_event_date']).dt.days.fillna(7).clip(upper=7)
+        cal["days_to_next_event"] = (cal['next_event_date'] - cal[date_col]).dt.days.fillna(999).clip(upper=14)
+        cal["days_since_last_event"] = (cal[date_col] - cal['prev_event_date']).dt.days.fillna(999).clip(upper=14)
         cal["is_event_in_7_days"] = (cal["days_to_next_event"] <= 7).astype(int)
         
         # Clean up temporary merge columns

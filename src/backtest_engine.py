@@ -17,7 +17,7 @@ import pandas as pd
 
 from src.backtest_windows import (
     generate_expanding_windows,
-    generate_rolling_windows,
+    generate_rolling_windows_reversed,
     split_data,
 )
 from src.baselines import seasonal_naive, simple_moving_average
@@ -127,6 +127,7 @@ class BacktestEngine:
     def __init__(
         self,
         model_name: str = "lgbm",
+        forecast_type:str = 'recursive',
         training_window_days: int = 730,
         horizon_days: int = 28,
         backtest_mode: str = "rolling",
@@ -141,6 +142,7 @@ class BacktestEngine:
         use_log_transform: bool = False,
     ) -> None:
         self.model_name = model_name
+        self.forecast_type = forecast_type.lower()
         self.training_window_days = training_window_days
         self.horizon_days = horizon_days
         self.backtest_mode = backtest_mode
@@ -170,13 +172,17 @@ class BacktestEngine:
         # Core pipeline components
         self.feature_builder = FeatureBuilder()
         quantiles = PIPELINE_CONFIG.get("quantiles") or None # returns a list of quantiles that we want find
+
         self.model = SelectModel(
             model=self.model_name,
             quantiles= quantiles,
             use_log_transform=self.use_log_transform,
             categorical_cols=self.categorical_cols,
         )
-        self.forecaster = Forecaster(model=self.model, feature_builder=self.feature_builder)
+        self.forecaster = Forecaster(model=self.model, feature_builder=self.feature_builder,
+                                     original_features=self.feature_names,forecast_type=self.forecast_type)
+
+
 
     def reset_state(self) -> None:
         """Clears accumulated out-of-sample errors and cached window results."""
@@ -186,7 +192,7 @@ class BacktestEngine:
     def generate_windows(self, full_data: pd.DataFrame) -> list[dict[str, Any]]:
         """Generates walk-forward window date ranges based on the configured mode."""
         if self.backtest_mode == "rolling":
-            windows = generate_rolling_windows(
+            windows = generate_rolling_windows_reversed(
                 full_data,
                 training_window=self.training_window_days,
                 horizon=self.horizon_days,
@@ -250,9 +256,10 @@ class BacktestEngine:
 
         # 1. Slice and filter active items
         window_slice = full_data[full_data["date"].between(train_start, eval_end)]
-        active_items_df = get_items_with_min_history(window_slice, min_history_days=self.min_history_days)
-        active_items_df = self.feature_builder.add_price_features(active_items_df)
+        # active_items_df = get_items_with_min_history(window_slice, min_history_days=self.min_history_days)
+        active_items_df = self.feature_builder.add_price_features(window_slice)
 
+        
         train_wnd, eval_wnd = split_data(
             df=active_items_df,
             start_date=train_start,
@@ -267,6 +274,8 @@ class BacktestEngine:
         metrics_naive = get_all_metrics(train_wnd, eval_wnd, baseline_naive)
         metrics_ma = get_all_metrics(train_wnd, eval_wnd, baseline_ma)
 
+
+        #### depending on the forecaster type, we build train and eval differently
         # 3. Build Features & Fit Machine Learning Model
         train_wnd = self.feature_builder.build(
             df=train_wnd,
@@ -280,13 +289,13 @@ class BacktestEngine:
         if missing_features:
             raise ValueError(f"Window {window_id}: Missing expected features: {missing_features}")
 
-        self.model.fit(train_wnd[feats], train_wnd["sales"])
-        preds_df = self.forecaster.recursive_forecaster(train_wnd, eval_wnd)
-        metrics_ml = get_all_metrics(train_wnd, eval_wnd, preds_df)
+        # you get the values
+        forecasted_demands  = self.forecaster.forecast(train_df=train_wnd,test_df=eval_wnd)
+        metrics_ml = get_all_metrics(train_wnd, eval_wnd, forecasted_demands)
 
         # 5. Inventory Replenishment & Holding Cost Optimization
         models_preds: dict[str, pd.DataFrame] = {
-            "ml": preds_df,
+            "ml": forecasted_demands,
             "ma": baseline_ma,
             "naive": baseline_naive,
         }
@@ -325,8 +334,7 @@ class BacktestEngine:
                 "MAE": m["MAE"],
                 "BIAS%": m["BIAS%"],
                 "wrmsse": m["wrmsse"],
-                "MAE-DEPT": m["MAE-DEPT-AGG"],
-                "MAE-CAT": m["MAE-CAT-AGG"],
+              
                 **inventory_costs.get(s_name, {}),
             }
             for s_name, m in model_metrics_map.items()

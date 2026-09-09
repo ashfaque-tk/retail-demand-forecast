@@ -1,0 +1,665 @@
+
+<!DOCTYPE html>
+
+<html>
+<head>
+
+<meta charset="UTF-8">
+
+<title>FVA Model Comparison — Recursive vs Direct</title>
+
+<style>
+
+body {
+    font-family: Arial, sans-serif;
+    background: #f5f6f8;
+    color: #222;
+    margin: 0;
+}
+
+.container {
+    max-width: 1400px;
+    margin: auto;
+    padding: 40px;
+}
+
+h1 {
+    margin-bottom: 5px;
+}
+
+.subtitle {
+    color: #666;
+    margin-bottom: 35px;
+}
+
+.section {
+    background: white;
+    padding: 25px;
+    margin-bottom: 25px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.cards {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.card {
+    background: #f1f3f5;
+    padding: 20px;
+    border-radius: 8px;
+    min-width: 190px;
+}
+
+.value {
+    font-size: 28px;
+    font-weight: bold;
+}
+
+.label {
+    color: #666;
+    margin-top: 5px;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+.data-table th {
+    background: #343a40;
+    color: white;
+    padding: 10px;
+}
+
+.data-table td {
+    padding: 9px;
+    border-bottom: 1px solid #ddd;
+    text-align: center;
+}
+
+.data-table tr:hover {
+    background: #f5f5f5;
+}
+
+select {
+    padding: 7px;
+}
+
+.note {
+    color: #666;
+    font-size: 14px;
+}
+
+</style>
+
+<script>
+
+function filterMetric() {
+
+    const selected =
+        document.getElementById("metric").value;
+
+    const rows =
+        document.querySelectorAll("#window-table tbody tr");
+
+    rows.forEach(row => {
+
+        const metric = row.cells[4].innerText;
+
+        row.style.display =
+            selected === "All" || metric === selected
+            ? ""
+            : "none";
+
+    });
+}
+
+</script>
+
+</head>
+
+
+<body>
+
+<div class="container">
+
+<h1>FVA Model Comparison — Recursive vs Direct</h1>
+
+<div class="subtitle">
+1-Year  | Backtest Summary
+</div>
+
+
+<!-- ====================================================== -->
+<!-- OVERALL -->
+<!-- ====================================================== -->
+
+<div class="section">
+
+<h2>Overall Model Comparison</h2>
+
+<div class="cards">
+
+<div class="card">
+<div class="value">-9.11%</div>
+<div class="label">Recursive Mean FVA</div>
+</div>
+
+<div class="card">
+<div class="value">22.67%</div>
+<div class="label">Direct Mean FVA</div>
+</div>
+
+<div class="card">
+<div class="value">8</div>
+<div class="label">Recursive Wins</div>
+</div>
+
+<div class="card">
+<div class="value">22</div>
+<div class="label">Direct Wins</div>
+</div>
+
+</div>
+
+</div>
+
+
+<!-- ====================================================== -->
+<!-- ACCURACY -->
+<!-- ====================================================== -->
+
+<div class="section">
+
+<h2>Accuracy Summary</h2>
+
+<p class="note">
+Positive FVA means improvement over the seasonal-naive benchmark.
+Higher FVA is therefore better.
+</p>
+
+<table class="dataframe data-table">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Recursive_Mean_FVA</th>
+      <th>Direct_Mean_FVA</th>
+      <th>Recursive_Median_FVA</th>
+      <th>Direct_Median_FVA</th>
+      <th>Recursive_Win_Rate</th>
+      <th>Direct_Win_Rate</th>
+      <th>Windows</th>
+    </tr>
+    <tr>
+      <th>metric</th>
+      <th></th>
+      <th></th>
+      <th></th>
+      <th></th>
+      <th></th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>MAE</th>
+      <td>-45.28</td>
+      <td>18.20</td>
+      <td>-43.36</td>
+      <td>17.78</td>
+      <td>0.00</td>
+      <td>100.00</td>
+      <td>15</td>
+    </tr>
+    <tr>
+      <th>wrmsse</th>
+      <td>27.06</td>
+      <td>27.13</td>
+      <td>27.05</td>
+      <td>26.49</td>
+      <td>100.00</td>
+      <td>100.00</td>
+      <td>15</td>
+    </tr>
+  </tbody>
+</table>
+
+</div>
+
+
+<!-- ====================================================== -->
+<!-- WINDOW -->
+<!-- ====================================================== -->
+
+<div class="section">
+
+<h2>Window-by-Window Performance</h2>
+
+<select id="metric" onchange="filterMetric()">
+
+<option value="All">All</option>
+<option value="MAE">MAE</option>
+<option value="wrmsse">WRMSSE</option>
+
+</select>
+
+<div id="window-table">
+
+<table class="dataframe data-table">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Window</th>
+      <th>Train Start</th>
+      <th>Train End</th>
+      <th>Metric</th>
+      <th>Recursive FVA (%)</th>
+      <th>Direct FVA (%)</th>
+      <th>Winner</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>0</td>
+      <td>2014-12-08T00:00:00.000</td>
+      <td>2015-12-08T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-44.86</td>
+      <td>17.74</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>0</td>
+      <td>2014-12-08T00:00:00.000</td>
+      <td>2015-12-08T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>24.57</td>
+      <td>23.96</td>
+      <td>Recursive</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>1</td>
+      <td>2014-11-10T00:00:00.000</td>
+      <td>2015-11-10T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-40.51</td>
+      <td>19.09</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>1</td>
+      <td>2014-11-10T00:00:00.000</td>
+      <td>2015-11-10T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>28.65</td>
+      <td>27.72</td>
+      <td>Recursive</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>2</td>
+      <td>2014-10-13T00:00:00.000</td>
+      <td>2015-10-13T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-42.74</td>
+      <td>22.51</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>8</th>
+      <td>2</td>
+      <td>2014-10-13T00:00:00.000</td>
+      <td>2015-10-13T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>32.59</td>
+      <td>33.47</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>12</th>
+      <td>3</td>
+      <td>2014-09-15T00:00:00.000</td>
+      <td>2015-09-15T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-39.39</td>
+      <td>17.78</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>13</th>
+      <td>3</td>
+      <td>2014-09-15T00:00:00.000</td>
+      <td>2015-09-15T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>27.16</td>
+      <td>31.07</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>17</th>
+      <td>4</td>
+      <td>2014-08-18T00:00:00.000</td>
+      <td>2015-08-18T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-38.43</td>
+      <td>17.60</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>18</th>
+      <td>4</td>
+      <td>2014-08-18T00:00:00.000</td>
+      <td>2015-08-18T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>21.07</td>
+      <td>23.73</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>22</th>
+      <td>5</td>
+      <td>2014-07-21T00:00:00.000</td>
+      <td>2015-07-21T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-43.36</td>
+      <td>16.94</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>23</th>
+      <td>5</td>
+      <td>2014-07-21T00:00:00.000</td>
+      <td>2015-07-21T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>27.44</td>
+      <td>26.38</td>
+      <td>Recursive</td>
+    </tr>
+    <tr>
+      <th>27</th>
+      <td>6</td>
+      <td>2014-06-23T00:00:00.000</td>
+      <td>2015-06-23T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-40.26</td>
+      <td>17.05</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>28</th>
+      <td>6</td>
+      <td>2014-06-23T00:00:00.000</td>
+      <td>2015-06-23T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>26.30</td>
+      <td>25.28</td>
+      <td>Recursive</td>
+    </tr>
+    <tr>
+      <th>32</th>
+      <td>7</td>
+      <td>2014-05-26T00:00:00.000</td>
+      <td>2015-05-26T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-38.86</td>
+      <td>18.44</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>33</th>
+      <td>7</td>
+      <td>2014-05-26T00:00:00.000</td>
+      <td>2015-05-26T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>26.26</td>
+      <td>25.45</td>
+      <td>Recursive</td>
+    </tr>
+    <tr>
+      <th>37</th>
+      <td>8</td>
+      <td>2014-04-28T00:00:00.000</td>
+      <td>2015-04-28T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-45.33</td>
+      <td>20.93</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>38</th>
+      <td>8</td>
+      <td>2014-04-28T00:00:00.000</td>
+      <td>2015-04-28T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>29.29</td>
+      <td>29.38</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>42</th>
+      <td>9</td>
+      <td>2014-03-31T00:00:00.000</td>
+      <td>2015-03-31T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-48.13</td>
+      <td>18.24</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>43</th>
+      <td>9</td>
+      <td>2014-03-31T00:00:00.000</td>
+      <td>2015-03-31T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>27.21</td>
+      <td>27.50</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>47</th>
+      <td>10</td>
+      <td>2014-03-03T00:00:00.000</td>
+      <td>2015-03-03T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-42.33</td>
+      <td>19.15</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>48</th>
+      <td>10</td>
+      <td>2014-03-03T00:00:00.000</td>
+      <td>2015-03-03T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>26.09</td>
+      <td>25.76</td>
+      <td>Recursive</td>
+    </tr>
+    <tr>
+      <th>52</th>
+      <td>11</td>
+      <td>2014-02-03T00:00:00.000</td>
+      <td>2015-02-03T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-48.47</td>
+      <td>16.69</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>53</th>
+      <td>11</td>
+      <td>2014-02-03T00:00:00.000</td>
+      <td>2015-02-03T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>27.05</td>
+      <td>26.50</td>
+      <td>Recursive</td>
+    </tr>
+    <tr>
+      <th>57</th>
+      <td>12</td>
+      <td>2014-01-06T00:00:00.000</td>
+      <td>2015-01-06T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-47.40</td>
+      <td>16.51</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>58</th>
+      <td>12</td>
+      <td>2014-01-06T00:00:00.000</td>
+      <td>2015-01-06T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>30.30</td>
+      <td>30.44</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>62</th>
+      <td>13</td>
+      <td>2013-12-09T00:00:00.000</td>
+      <td>2014-12-09T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-55.12</td>
+      <td>17.93</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>63</th>
+      <td>13</td>
+      <td>2013-12-09T00:00:00.000</td>
+      <td>2014-12-09T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>25.14</td>
+      <td>26.49</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>67</th>
+      <td>14</td>
+      <td>2013-11-11T00:00:00.000</td>
+      <td>2014-11-11T00:00:00.000</td>
+      <td>MAE</td>
+      <td>-64.01</td>
+      <td>16.35</td>
+      <td>Direct</td>
+    </tr>
+    <tr>
+      <th>68</th>
+      <td>14</td>
+      <td>2013-11-11T00:00:00.000</td>
+      <td>2014-11-11T00:00:00.000</td>
+      <td>wrmsse</td>
+      <td>26.71</td>
+      <td>23.87</td>
+      <td>Recursive</td>
+    </tr>
+  </tbody>
+</table>
+
+</div>
+
+</div>
+
+
+<!-- ====================================================== -->
+<!-- COST -->
+<!-- ====================================================== -->
+
+<div class="section">
+
+<h2>Inventory Cost Impact</h2>
+
+<p class="note">
+Positive FVA means the model has lower cost than the
+seasonal-naive benchmark.
+</p>
+
+<table class="dataframe data-table">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Recursive_Mean_FVA</th>
+      <th>Direct_Mean_FVA</th>
+      <th>Recursive_Win_Rate</th>
+      <th>Direct_Win_Rate</th>
+    </tr>
+    <tr>
+      <th>metric</th>
+      <th></th>
+      <th></th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>monthly_holding_cost_classical</th>
+      <td>-0.86</td>
+      <td>0.98</td>
+      <td>21.43</td>
+      <td>71.43</td>
+    </tr>
+    <tr>
+      <th>monthly_holding_cost_mae</th>
+      <td>5.63</td>
+      <td>8.51</td>
+      <td>85.71</td>
+      <td>100.00</td>
+    </tr>
+    <tr>
+      <th>monthly_holding_cost_rmse</th>
+      <td>8.31</td>
+      <td>11.02</td>
+      <td>100.00</td>
+      <td>100.00</td>
+    </tr>
+  </tbody>
+</table>
+
+</div>
+
+
+<!-- ====================================================== -->
+<!-- INTERPRETATION -->
+<!-- ====================================================== -->
+
+<div class="section">
+
+<h2>Model Selection Checklist</h2>
+
+<ul>
+
+<li>Compare mean FVA across all windows.</li>
+
+<li>Check median FVA to avoid conclusions driven by a few windows.</li>
+
+<li>Check win rate for consistency across windows.</li>
+
+<li>Compare MAE and WRMSSE separately.</li>
+
+<li>Check whether accuracy improvements translate into
+lower inventory cost.</li>
+
+<li>Inspect the window-by-window results before selecting
+the final deployment model.</li>
+
+</ul>
+
+</div>
+
+
+</div>
+
+</body>
+</html>
