@@ -10,12 +10,43 @@
 import pandas as pd 
 import numpy as np 
 
-# ASSUMPTIONS — document these, adjust freely
+# ASSUMPTIONS — 
 
 
  
 #Safety Stock Formulas
 ## building the benchmark stocking asuuming a normal distribution
+
+
+class InventoryPolicy():
+
+    def __init__(self,lead_time:int=14,review_period:int=7,service_level:float=90,daily_unit_holding_cost:float=0.02,stockout_cost:float=0.5):
+
+        self.lead_time = lead_time
+        self.review_period = review_period
+        self.service_level = service_level 
+        self.risk_period = lead_time+review_period
+
+        self.daily_unit_holding_cost=daily_unit_holding_cost 
+        self.stockout_penalty = stockout_cost
+
+
+    def _safety_stock(self,raw_risk_period:pd.DataFrame,predicted_risk_period:pd.DataFrame,type='rmse'|'quantile'):
+
+
+
+        return 
+    
+
+
+
+
+
+
+
+
+
+
 
 
 def compute_rolling_tau_error(test_df: pd.DataFrame, pred_df: pd.DataFrame, tau: int):
