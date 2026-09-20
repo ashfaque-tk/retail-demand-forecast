@@ -23,8 +23,8 @@ from src.backtest_windows import (
 from src.baselines import seasonal_naive, simple_moving_average
 from src.features import FeatureBuilder
 from src.inventory_policy import (
-    compute_rolling_tau_error,
-    run_inventory_pipeline,
+    compute_rolling_tau_error,calculate_error_statistics,
+    run_inventory_pipeline, InventoryPolicy
 )
 from src.metrics import fva, get_all_metrics
 from src.models_train import SelectModel
@@ -149,6 +149,10 @@ class BacktestEngine:
             "ma": [],
             "naive": [],
         }
+        ### initlize a similar one for  storing actuals and preds
+        self.actuals_preds :dict[str,pd.DataFrame] = {'ml':pd.DataFrame(),
+                                                      'ma':pd.DataFrame(),
+                                                      'naive':pd.DataFrame()}
 
         # Cache for last executed window outputs (for easy plotting / inspection)
         self.last_window_result: WindowResult | None = None
@@ -166,6 +170,7 @@ class BacktestEngine:
         self.forecaster = Forecaster(model=self.model, feature_builder=self.feature_builder,
                                      original_features=self.feature_names,forecast_type=self.forecast_type)
 
+        
 
 
     def reset_state(self) -> None:
@@ -288,22 +293,37 @@ class BacktestEngine:
 
         for short_name, current_preds in models_preds.items():
             # Rolling cumulative tau error
-            error_model = compute_rolling_tau_error(eval_wnd, current_preds, tau=self.tau_days)
+            ### merge the actuals vs preds for the given model 
+            forecasts_df_model = eval_wnd.merge(current_preds, on=['item_id', 'date'], how='inner').sort_values(['item_id', 'date']).copy()
+            # contiously append new df with old ones
+            self.actuals_preds[short_name] = pd.concat((self.actuals_preds[short_name],forecasts_df_model),axis=0) 
+
+            if window_id == 0:
+                #set up the initial inventory only for the first window
+                initial_inventory = eval_wnd.groupby('item_id',observed=True)['sales'].agg(mean='mean')
+
+                # first month error 
+                error_model = compute_rolling_tau_error(forecasts=forecasts_df_model,
+                                                         tau=self.tau_days)
+                error_stats = calculate_error_statistics(error_model)#pd.Series
+                self.oos_errors[short_name].append(error_stats)#error for the first window
+
+                self.inventory = InventoryPolicy(inventory= initial_inventory,forecasts=forecasts_df_model,
+                                                 lead_time=4,review_period=7,daily_unit_holding_cost=0.2,
+                                                 stockout_cost=1,oos_error_list= self.oos_errors)
+                    
 
             # Evaluate policy only after window 0 (requires historical OOS error)
-            if window_id > 0 and len(self.oos_errors[short_name]) > 0:
-                cost_summary = run_inventory_pipeline(
-                    current_raw=eval_wnd,
-                    current_forecast=current_preds,
-                    oos_error=self.oos_errors[short_name][-1],
-                    review_period=self.review_period_days,
-                    lead_time=self.lead_time_days,
-                    holding_cost_per_unit=self.holding_cost_rate,
-                )
-                inventory_costs[short_name] = cost_summary.to_dict()
+            elif window_id > 0 and len(self.oos_errors[short_name]) > 0:
+
+
+                inventory_policy = self.inventory.daily_simulation(actual_sales=train_wnd,
+                                                                   forecasted_demand=current_preds)
+
+                inventory_costs[short_name] = inventory_policy.to_dict()
 
             # Record out-of-sample error history for this model
-            self.oos_errors[short_name].append(error_model)
+            # self.oos_errors[short_name].append(error_model)
 
         # 6. Assemble tidy metric records
         name_to_label = {"naive": "seasonal_naive", "ma": "moving_average", "ml": self.model_name}

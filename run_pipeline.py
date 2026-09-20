@@ -34,8 +34,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-
-
 def build_engine(feature_names: list[str]) -> BacktestEngine:
     """Constructs BacktestEngine directly from the unified PIPELINE_CONFIG."""
     return BacktestEngine(
@@ -77,6 +75,7 @@ def save_deployment_artifacts(deployment: DeploymentResult, engine: BacktestEngi
     return artifact_dir
 
 def main():
+
     start_time = time.time()
     
     # 1. Load raw data
@@ -86,7 +85,8 @@ def main():
     
     validate_raw(train_df)
     validate_raw(test_df)
-    # 2. Dynamically determine feature schema (NO .pkl file!)
+
+    # 2. Dynamically determine feature schema
     feat_builder = FeatureBuilder()
     
     # Take a small sample to see what features FeatureBuilder generates
@@ -94,10 +94,11 @@ def main():
     sample_features = feat_builder.build(sample_df)
     
     # Everything generated that isn't metadata/target is a feature
-    non_feature_cols = {
+    non_feature_cols = [
         "date", "sales", "origin_date", "target_date", "target_sales",
         "store_id", "state_id", "item_id", "cat_id", "dept_id"
-    }
+    ]
+
     full_features = [col for col in sample_features.columns if col not in non_feature_cols]
     
     logger.info("Dynamically detected %d feature columns: %s", len(full_features), full_features[:5])

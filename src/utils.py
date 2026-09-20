@@ -177,11 +177,5 @@ if __name__ == '__main__':
     assert set(test_stratified['item_id'].unique().tolist())==set(train_stratified['item_id'].unique().tolist()),'AssersionError: test and train have different items'
 
     print(train_stratified.columns,test_stratified.columns)
-    # ### save this as our final set 
-
-    # train_stratified.to_parquet(f'{data_dir}train_filtered_ca1.parquet')
-    # test_stratified.to_parquet(f'{data_dir}test_filtered_ca1.parquet')
-
-    # quit()
 
   
