@@ -1,8 +1,6 @@
 import numpy as np
 import pandas as pd
 
-'''wrmsse metric '''
-
 # Scale: per-item naive forecast error on training data
 def scale(train_df):
     train_sorted = train_df.sort_values(['item_id', 'date'])

@@ -22,7 +22,7 @@ from src.backtest_windows import (
 )
 from src.baselines import seasonal_naive, simple_moving_average
 from src.features import FeatureBuilder
-from src.Inventory_optimization.restock_policy_1 import (
+from src.inventory_policy import (
     compute_rolling_tau_error,
     run_inventory_pipeline,
 )
@@ -52,41 +52,25 @@ class WindowResult:
 
 @dataclass
 class DeploymentResult:
-    """Artifacts produced by one production forecast and inventory-policy run.
-
-    The calibration period is historical data used only to estimate forecast error.
-    The final model is then refit on all supplied historical data before forecasting
-    the production horizon.
-    """
-    calibration_start: pd.Timestamp
-    calibration_end: pd.Timestamp
+    """Production deployment outputs: operational decisions, forecasts, and metadata."""
+    
+    # 1. Operational Decisions (What PostgreSQL & business planners need)
+    forecasts: pd.DataFrame          # [item_id, date, sales_pred, (quantiles)]
+    inventory_policy: pd.DataFrame   # [item_id, review_date, safety_stock, order_up_to]
+    
+    # 2. Financial & Performance Estimates
+    inventory_cost_summary: pd.Series  # Holding cost estimate across policies
+    calibration_metrics: dict[str, float]  # OOS validation metrics (MAE, WRMSSE)
+    
+    # 3. Execution Metadata (Audit log)
+    model_name: str
+    run_timestamp: pd.Timestamp
     forecast_start: pd.Timestamp
     forecast_end: pd.Timestamp
-    calibration_metrics: dict[str, float]
-    calibration_predictions: pd.DataFrame
-    forecasts: pd.DataFrame
-    inventory_policy: pd.DataFrame
-    inventory_costs: pd.DataFrame
-    inventory_cost_summary: pd.Series
-    error_statistics: pd.DataFrame
-    test_actuals: pd.DataFrame
-    model_results: dict[str, "ModelDeploymentResult"]
+    
+    # 4. Optional: Baseline comparison (only populated if offline validation run)
+    baseline_metrics: dict[str, dict[str, float]] | None = None
 
-
-@dataclass
-class ModelDeploymentResult:
-    """Forecast, calibration, and inventory artifacts for one candidate model."""
-
-    calibration_metrics: dict[str, float]
-    test_metrics: dict[str, float] | None
-    calibration_predictions: pd.DataFrame
-    forecasts: pd.DataFrame
-    inventory_policy: pd.DataFrame
-    inventory_costs: pd.DataFrame
-    inventory_cost_summary: pd.Series
-    error_statistics: pd.DataFrame
-
-                     
 class BacktestEngine:
     """Walk-forward backtesting orchestrator for model-agnostic forecasting pipelines.
 

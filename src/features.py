@@ -9,15 +9,31 @@ Update necessarily according to the problem.
 import os 
 import numpy as np
 import pandas as pd
-from typing import List,Dict
+from typing import list,dict,Any
 
 import time 
 
 class FeatureBuilder():
 
-    def __init__(self, col_names:dict = {'item_col':'item_id','dept_col':'dept_id','cat_col':'cat_id',
-                                         'store_col':'store_id','state_col':'state_id','price_col':'sell_price',
-                                         'week_col':'wm_yr_wk','target':'sales','date_col':'date'}):
+    def __init__(self, lags: list[int] = [7, 28, 60, 90],
+        rolling_means: list[int] = [7, 28, 60, 90],
+        rolling_maxs: list[int] = [7, 28, 60, 90],
+        rolling_on_lags: dict[int, list[int]] = {28: [7, 28]},
+        col_names:dict = {'item_col':'item_id','dept_col':'dept_id','cat_col':'cat_id',
+                        'store_col':'store_id','state_col':'state_id','price_col':'sell_price',
+                        'week_col':'wm_yr_wk','target':'sales','date_col':'date'}):
+
+        self.lags = lags
+        self.rolling_means = rolling_means
+        self.rolling_maxs = rolling_maxs
+        self.rolling_on_lags = rolling_on_lags
+        
+        # Base metadata columns that should NEVER be used as model inputs
+        self.excluded_metadata = {
+            "date", "sales", "origin_date", "target_date", "target_sales",
+            "d", "wm_yr_wk", "event_name_1", "event_name_2", "event_type_1", "event_type_2",
+             "store_id", "state_id"
+        }
 
         self.id_col = col_names['item_col']
         self.date_col = col_names['date_col']
@@ -37,157 +53,149 @@ class FeatureBuilder():
         if not np.issubdtype(df[self.date_col].dtype, np.datetime64):
             df['date'] = pd.to_datetime(df['date'])
             return df 
-
-    def _validate_columns(self, df: pd.DataFrame, required: List[str], df_name: str):
+    # ---------- validation ----------
+    def _validate_columns(self, df: pd.DataFrame, required: list[str], df_name: str = "df"):
         missing = [c for c in required if c not in df.columns]
         if missing:
             raise ValueError(f"{df_name} missing required columns: {missing}")
+    # ---------- unified lags & rolling features ----------
 
-    # ---------- avg sales ----------
-  
-    def add_avg_sales(self,df:pd.DataFrame)-> pd.DataFrame:
-
-        df['item_sold_avg'] = df.groupby(self.id_col, observed=True)[self.target_col].transform('mean')
-        df['dept_sold_avg'] = df.groupby(self.dept_col, observed=True)[self.target_col].transform('mean')
-        df['cat_sold_avg'] = df.groupby(self.CAT_COL, observed=True)[self.target_col].transform('mean')
-        return df
-    
-    # ---------- lag / rolling — lags/windows always explicit, never stored ----------
-    def add_lags(self, df:pd.DataFrame, lags: List[int] = None) -> pd.DataFrame:
-        if lags is None:
-            lags = []
-
-   
-        gb = df.groupby(self.id_col, observed=True)[self.target_col]
+    def add_lags_and_rollings(
+        self,
+        df: pd.DataFrame,
+        lags: list[int] | None = None,
+        rolling_means: list[int] | None = None,
+        rolling_maxs: list[int] | None = None,
+        rolling_on_lags: dict[int, list[int]] | None = None,
+    ) -> pd.DataFrame:
+        """Computes all lag and rolling features in a single pass over the grouped target."""
+        lags = self.lags if lags is None else lags
+        rolling_means = self.rolling_means if rolling_means is None else rolling_means
+        rolling_maxs = self.rolling_maxs if rolling_maxs is None else rolling_maxs
+        rolling_on_lags = self.rolling_on_lags if rolling_on_lags is None else rolling_on_lags
+        # Single GroupBy object for target column
+        gb_target = df.groupby(self.id_col, observed=True)[self.target_col]
+        # 1. Standard lags
         for lag in lags:
-            df[f'lag_{lag}'] = gb.shift(lag)
+            df[f"lag_{lag}"] = gb_target.shift(lag)
+        # 2. Shifted rolling mean and max (shift(1) prevents lookahead leakage)
+        target_shifted = gb_target.shift(1)
+        for wdw in rolling_means:
+            df[f"rolling_mean_{wdw}"] = target_shifted.rolling(wdw).mean().reset_index(level=0, drop=True)
+        for wdw in rolling_maxs:
+            df[f"rolling_max_{wdw}"] = target_shifted.rolling(wdw).max().reset_index(level=0, drop=True)
+        # 3. Rolling statistics on top of a lag (e.g., lag 28 rolling mean)
+        if rolling_on_lags:
+            for lag, windows in rolling_on_lags.items():
+                lag_col = f"lag_{lag}"
+                if lag_col not in df.columns:
+                    df[lag_col] = gb_target.shift(lag)
+                gb_lag = df.groupby(self.id_col, observed=True)[lag_col]
+                for wdw in windows:
+                    df[f"rolling_lag_{lag}_win_{wdw}"] = gb_lag.rolling(wdw).mean().reset_index(level=0, drop=True)
         return df
-    
-    def add_rolling_mean_max(self,df:pd.DataFrame,mean_window: List[int]|None,max_window:List[int]|None) -> pd.DataFrame:
-
-        gb = df.groupby(self.id_col, observed=True)[self.target_col]
-        if mean_window is not None:
-            for wdw in mean_window:
-                df[f'rolling_mean_{wdw}'] = gb.shift(1).rolling(wdw).mean().reset_index(level=0, drop=True)
-        if max_window is not None:
-            for wdw in max_window:
-                df[f'rolling_max_{wdw}'] = gb.shift(1).rolling(wdw).max().reset_index(level=0,drop=True)
+    # ---------- trend features ----------
+    def add_trend_features(
+        self,
+        df: pd.DataFrame,
+        mean_col_short: str = "rolling_mean_7",
+        mean_col_long: str = "rolling_mean_28",
+    ) -> pd.DataFrame:
+        if mean_col_short in df.columns and mean_col_long in df.columns:
+            df["selling_trend"] = df[mean_col_short] / (df[mean_col_long] + 1e-5)
         return df
-
-    def add_rolling_on_lag(self, df:pd.DataFrame,lags: List[int], windows: List[int]) -> pd.DataFrame:
-     
-        for lag in lags:
-            lag_col = f'lag_{lag}'
-            if lag_col not in df.columns:
-                raise ValueError(f'{lag_col} not found -- call add_lags(df, lags) first')
-            gb = df.groupby(self.id_col, observed=True)[lag_col]
-            for window in windows:
-                df[f'rolling_lag_{lag}_win_{window}'] = gb.rolling(window).mean().reset_index(level=0, drop=True)
-        return df
-
-    # ---------- trend ----------
-    def add_trend_features(self,df:pd.DataFrame, mean_col_7: str='rolling_mean_7', mean_col_28: str='rolling_mean_28',
-                            ) -> pd.DataFrame:
-        
-        self._validate_columns(df, [mean_col_7, mean_col_28], "df")
-        df['selling_trend'] = df[mean_col_7] / (df[mean_col_28] + 1e-5)
-        # df['demand_vs_historical_mean'] = df[mean_col_7] / (df[historical_mean_col] + 1e-5)
-        return df
-    
-    def add_sales_historical_mean(self, df: pd.DataFrame, training_window: int = 730) -> pd.DataFrame:
-        """ it reads self.target_col directly.
-        """
-        df = df.sort_values([self.id_col, self.date_col])
-        df['sales_historical_mean'] = df.groupby(self.id_col, observed=True)[self.target_col].transform(
-            lambda x: x.shift(1).rolling(training_window, min_periods=1).mean())
-        return df
-    
-    def add_price_features(self,df:pd.DataFrame):
+    # ---------- price features ----------
+    def add_price_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
-        # price change relative to 7 days ago
-        group = [self.id_col,self.store_col]
-        price_lag_7 = (df.groupby(group,observed=True)[self.price_col].shift(7))
-        df['delta_price_weekn-1'] =((df[self.price_col]-price_lag_7)/price_lag_7).where(price_lag_7>0)
-
-        # historical price , price ratio to historical mean
-        df['price_historical_mean'] = df.groupby(group,observed=True)[self.price_col].transform(
-            lambda x: x.shift(1).expanding().mean())
-        df['price_historical_std'] = df.groupby(group,observed=True)[self.price_col].transform(
-            lambda x: x.shift(1).expanding().std())
-
-        df['price_ratio_mean'] = df[self.price_col].div(df['price_historical_mean']).where(df['price_historical_mean']>0)
-
-        df["is_discounted"] = np.where(df["price_historical_mean"].notna(),(df[self.price_col] < df["price_historical_mean"]).astype("int8"),
-            np.nan)
-
-        # relative price compared with other products in the same group
-
-        dept_week_group  = [self.dept_col,self.week_col,self.store_col]
-        dept_mean_price = (df.groupby(dept_week_group, observed=True)['sell_price']
-                            .mean()
-                            .reset_index()
-                            .rename(columns={'sell_price': 'dept_mean_price'})
-                        )
-
-        df = df.merge( dept_mean_price, on=dept_week_group, how='left')
-
-        df['delta_price_rltv_dept'] = (df['sell_price']/ df['dept_mean_price'])
-
+        group = [self.id_col, self.store_col]
+        # Price change relative to 7 days ago
+        price_lag_7 = df.groupby(group, observed=True)[self.price_col].shift(7)
+        df["delta_price_weekn-1"] = ((df[self.price_col] - price_lag_7) / price_lag_7).where(price_lag_7 > 0)
+        # Expanding historical price statistics
+        df["price_historical_mean"] = df.groupby(group, observed=True)[self.price_col].transform(
+            lambda x: x.shift(1).expanding().mean()
+        )
+        df["price_ratio_mean"] = df[self.price_col].div(df["price_historical_mean"]).where(df["price_historical_mean"] > 0)
+        df["is_discounted"] = np.where(
+            df["price_historical_mean"].notna(),
+            (df[self.price_col] < df["price_historical_mean"]).astype("int8"),
+            np.nan,
+        )
+        # Relative price compared with other products in the same department
+        dept_week_group = [self.dept_col, self.week_col, self.store_col]
+        if all(col in df.columns for col in dept_week_group):
+            dept_mean_price = (
+                df.groupby(dept_week_group, observed=True)[self.price_col]
+                .mean()
+                .reset_index()
+                .rename(columns={self.price_col: "dept_mean_price"})
+            )
+            df = df.merge(dept_mean_price, on=dept_week_group, how="left")
+            df["delta_price_rltv_dept"] = df[self.price_col] / df["dept_mean_price"]
         return df
-    
-    # ---------- orchestrator (recursive-forecast default; direct will call
-    # # the pieces above directly, per-horizon, instead of this) ----------
-    def build(self, df:pd.DataFrame, lags: List[int]=[1,2,3,7,28,60,90] ,mean_windows: List[int] = [3,7,14,21,28,60,90],
-              max_windows:List[int]=[3,7,14,21,28,60,90],rolling_on_lags:List[int]=[28]) -> pd.DataFrame:
-
+    # ---------- main orchestrator ----------
+    def build(
+        self,
+        df: pd.DataFrame,
+        lags: list[int] | None = None,
+        rolling_means: list[int] | None = None,
+        rolling_maxs: list[int] | None = None,
+        rolling_on_lags: dict[int, list[int]] | None = None,
+    ) -> tuple[pd.DataFrame, list[str]]:
+        """Main entry point. Builds all features and returns (featured_df, feature_column_names)."""
         df = df.copy()
-        # df = self.add_avg_sales(df)
-        df = self.add_lags(df, lags=lags)
-        df = self.add_rolling_mean_max(df, mean_window=mean_windows,max_window=max_windows)
-        df = self.add_rolling_on_lag(df, lags=rolling_on_lags, windows=[7,28])
-        df = self.add_trend_features(df, mean_col_7=f'rolling_mean_7', mean_col_28=f'rolling_mean_28')
-
-        if 'price_historical_mean' not in df.columns:
+        # 1. Price features
+        if self.price_col in df.columns and "price_historical_mean" not in df.columns:
             df = self.add_price_features(df)
-        return df
-
-    def build_next_day_features(self,history_df:pd.DataFrame, next_day_df:pd.DataFrame,dynamic_feats:dict[str,List[int]|None]={'lags':[7],
-                                                                                                         'rolling_mean':[7,28,60,90],
-                                                                                                         'rolling_max':[7,28,60,90],
-                                                                                                         'rolling_on_lag':[28],
-                                                                                                         }):
-        '''
-        creating rolling and lag feats 
-        history_df: already cut off to recent 100 days, columns: ['item_id','date','sales']
-        next_day_df: pd.DataFrame(['items':items,'date':date])
-        return next_day_feats: pd.DataFrame with only dynamic features,'item_id','date'''
-       
-        assert (next_day_df['date'].unique()[0] - history_df['date'].max()).days==1,'AssersionError: Non-consecutive target date is given'
-
-        lags = dynamic_feats['lags']
-        rolling_means = dynamic_feats['rolling_mean']
-        rolling_max = dynamic_feats['rolling_max']
-        rolling_on_lag = dynamic_feats['rolling_on_lag']
-
-        next_day =  next_day_df.copy() 
-        next_day['sales'] = np.nan
-        
-        # append this to history
-        hist_updated = pd.concat([history_df,next_day],ignore_index=True).sort_values([self.id_col,self.date_col]).reset_index(drop=True)
-
-        if lags is not None:
-            hist_updated = self.add_lags(hist_updated,lags)
-        if rolling_means is not None or rolling_max is not None:
-            hist_updated = self.add_rolling_mean_max(hist_updated,mean_window=rolling_means,max_window=rolling_max)
-        if rolling_on_lag is not None:
-            hist_updated = self.add_rolling_on_lag(hist_updated,lags=rolling_on_lag,windows=[7,28])
-
+        # 2. Unified lags & rolling statistics
+        df = self.add_lags_and_rollings(
+            df,
+            lags=lags,
+            rolling_means=rolling_means,
+            rolling_maxs=rolling_maxs,
+            rolling_on_lags=rolling_on_lags,
+        )
+        # 3. Short vs long-term trend
+        df = self.add_trend_features(df)
+        # 4. Safe feature extraction (all columns except raw metadata/targets)
+        feature_names = [col for col in df.columns if col not in self.excluded_metadata]
+        return df, feature_names
+    # ---------- recursive next-day predictor ----------
+    def build_next_day_features(
+        self,
+        history_df: pd.DataFrame,
+        next_day_df: pd.DataFrame,
+        dynamic_feats: dict[str, Any] | None = None,
+    ) -> pd.DataFrame:
+        """Prepares lag/rolling features for a single future day during recursive forecasting."""
+        assert (next_day_df[self.date_col].unique()[0] - history_df[self.date_col].max()).days == 1, (
+            "AssertionError: Non-consecutive target date given."
+        )
+        feats = dynamic_feats or {
+            "lags": self.lags,
+            "rolling_mean": self.rolling_means,
+            "rolling_max": self.rolling_maxs,
+            "rolling_on_lag": self.rolling_on_lags,
+        }
+        next_day = next_day_df.copy()
+        next_day[self.target_col] = np.nan
+        # Append next day placeholder to history
+        hist_updated = (
+            pd.concat([history_df, next_day], ignore_index=True)
+            .sort_values([self.id_col, self.date_col])
+            .reset_index(drop=True)
+        )
+        # Apply unified lag & rolling computation
+        hist_updated = self.add_lags_and_rollings(
+            hist_updated,
+            lags=feats.get("lags"),
+            rolling_means=feats.get("rolling_mean"),
+            rolling_maxs=feats.get("rolling_max"),
+            rolling_on_lags=feats.get("rolling_on_lag"),
+        )
         hist_updated = self.add_trend_features(hist_updated)
-
-        next_day_full_feats = hist_updated[hist_updated['date']==next_day['date'].unique()[0]]
-
-        return next_day_full_feats  # row[full_feats]
-
+        target_date = next_day[self.date_col].unique()[0]
+        return hist_updated[hist_updated[self.date_col] == target_date]
 
 
 
@@ -315,45 +323,4 @@ def add_calendar_features(cal_df: pd.DataFrame, date_col:str='date') -> pd.DataF
     return cal
     
 if __name__ == '__main__':
-    from pathlib import Path
-    import pandas as pd
-
-    # Define project root dynamically based on script location
-    BASE_DIR = Path(__file__).resolve().parent.parent
-    DATA_DIR = BASE_DIR / "data"
-
-    # Safe loading paths
-    cal_path = DATA_DIR / "raw/calendar.csv"
-    sales_path = DATA_DIR / 'processed/sales_known_ca_1.parquet'
-    sales_path_test = DATA_DIR / 'processed/sales_future_ca_1.parquet'
-
-    df_calendar = pd.read_csv(cal_path)
-    df_sales_train = pd.read_parquet(sales_path)
-    df_sales_test = pd.read_parquet(sales_path_test)
-
-    # 1. Idempotent Calendar Feature Addition (Calendar is universal master data known in advance)
-    if 'day_of_week' not in df_calendar.columns:
-        df_calendar = add_calendar_features(df_calendar, date_col='date')
-
-    # 2. Clean Merge for Train Set (Avoiding price aggregates to prevent data leakage)
-    calendar_cols_train = [col for col in df_calendar.columns if col in df_sales_train.columns and col != 'date']
-    if calendar_cols_train:
-        df_sales_train = df_sales_train.drop(columns=calendar_cols_train)
-    df_sales_train = df_sales_train.merge(df_calendar, on=['date'], how='left')
-
-    # 3. Clean Merge for Test Set
-    calendar_cols_test = [col for col in df_calendar.columns if col in df_sales_test.columns and col != 'date']
-    if calendar_cols_test:
-        df_sales_test = df_sales_test.drop(columns=calendar_cols_test)
-    df_sales_test = df_sales_test.merge(df_calendar, on=['date'], how='left')
-
-    # 4. Atomic Parquet Saving
-    processed_dir = DATA_DIR / 'processed'
-    processed_dir.mkdir(parents=True, exist_ok=True)
-
-    df_calendar.to_parquet(processed_dir / 'updated_calendar.parquet', index=False)
-    df_sales_train.to_parquet(processed_dir / 'sales_known_ca_1.parquet', index=False)
-    df_sales_test.to_parquet(processed_dir / 'sales_future_ca_1.parquet', index=False)
-    
-    print("Pipeline executed successfully. Calendar features merged cleanly without price feature contamination.")
-
+    pass 

@@ -21,50 +21,18 @@ def split_data(df:pd.DataFrame, start_date:pd.DatetimeIndex, end_date:pd.Datetim
 
     return train_, test_
 
-def generate_rolling_windows(df:pd.DataFrame, training_window:int=365, horizon:int=28, step_size:int=120, date_col:str='date')->dict[str,pd.DatetimeIndex]:
-    """
-    Generates a list of fixed-size rolling window date ranges for walk-forward validation.
-    """
-    min_date = df[date_col].min()
-    max_date = df[date_col].max()
-    
-    windows = []
-    window_id = 1
-    
-    current_train_start = min_date
-    
-    while True:
-        current_train_end = current_train_start + pd.Timedelta(days=int(training_window))
-        test_start = current_train_end
-        test_end = test_start + pd.Timedelta(days=int(horizon))
-        
-        # Stop generating windows if the test period extends beyond available data
-        if test_end > max_date:
-            break        
-        windows.append({
-            'window_id': f"window_{window_id}",
-            'train_start': current_train_start,
-            'train_end': current_train_end,
-            'test_start': test_start,
-            'test_end': test_end
-        })  
-        window_id += 1
-        current_train_start += pd.Timedelta(days=int(step_size))     
 
-    return windows
-
-import pandas as pd
-
-def generate_rolling_windows_reversed(
+def generate_rolling_windows(
     df: pd.DataFrame,
     training_window: int = 365,
     horizon: int = 28,
     step_size: int = 120,
-    date_col: str = 'date'
+    date_col: str = 'date',
+    max_windows:int = 10,
 ) -> list[dict[str, Any]]:
     """
-    Generates a list of fixed-size rolling window date ranges for walk-forward validation,
-    starting from the most recent date in the dataset (latest window = window_1).
+    Generates a given list of fixed-size rolling window date ranges for walk-forward validation,
+    .
     """
     min_date = df[date_col].min()
     max_date = df[date_col].max()
@@ -95,10 +63,23 @@ def generate_rolling_windows_reversed(
         window_id += 1
         # Step back in time
         current_test_end -= pd.Timedelta(days=int(step_size))
+
+    if max_windows is not None and max_windows>0:
+        windows = windows[:max_windows]
+
+    windows = windows[::-1]# reverse to the original old-> new order
+    # Assign sequential window IDs
+    for idx, w in enumerate(windows):
+        w['window_id'] = f"window_{idx}"
         
     return windows
 
-def generate_expanding_windows(df, training_window=365, horizon=28, step_size=120, date_col='date'):
+
+def generate_expanding_windows(df:pd.DataFrame, 
+                               training_window:int=365, 
+                               horizon:int=28, 
+                               step_size:int=120,
+                               date_col:str='date')->list[dict[str,Any]]:
     """
     Generates a list of expanding window date ranges for walk-forward validation.
     """

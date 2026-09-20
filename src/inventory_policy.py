@@ -9,6 +9,10 @@
 
 import pandas as pd 
 import numpy as np 
+import logging 
+
+
+logger = logging.getLogger(__name__)
 
 # ASSUMPTIONS — 
 
@@ -20,27 +24,107 @@ import numpy as np
 
 class InventoryPolicy():
 
-    def __init__(self,lead_time:int=14,review_period:int=7,service_level:float=90,daily_unit_holding_cost:float=0.02,stockout_cost:float=0.5):
+    def __init__(self,inventory:pd.DataFrame,lead_time:int=14,review_period:int=7,daily_unit_holding_cost:float=0.2,stockout_cost:float=1,
+                 oos_error_list:list[pd.Series]| None=None):
 
         self.lead_time = lead_time
         self.review_period = review_period
-        self.service_level = service_level 
+    
         self.risk_period = lead_time+review_period
 
         self.daily_unit_holding_cost=daily_unit_holding_cost 
         self.stockout_penalty = stockout_cost
 
+        # service level with given costs== 83.33% and z-score = 0.97
+        self.target_service_level = 1/(1+0.2)
 
-    def _safety_stock(self,raw_risk_period:pd.DataFrame,predicted_risk_period:pd.DataFrame,type='rmse'|'quantile'):
+        #inventory data with on_hand and in_transit, for on_hand date re
+        # get populated through continous day simulations,
+        self.inventory = inventory 
+        # intialize the oos error list: tracking the error deviation in the previous risk_period  
+        if oos_error_list is None:
+            logging.ERROR(f"Out Of Sample Error list is None. Provide a list ")
+        self.oos_errors = oos_error_list # need to be updated every review period 
+        
+
+    def _safety_stock(self,type:str='rmse'|'quantile'):
+        ''' rmse_error should be from previous risk period, not current risk period'''
+        z_score = 0.97
+        return z_score * self.oos_errors[-1] * np.sqrt(self.risk_period)
+
+    def update_oos_error_list(self):
+        ''' find a optimized way to update the error stats for the prior risk period'''
+        pass 
+
+    def generate_order(self,forecasted_risk_period:pd.DataFrame,on_hand_current:pd.DataFrame,on_order:pd.DataFrame):
+        '''forecasted_risk_period: forecasted_demand for the next risk period to generate order'''   
+        # Extract latest TAU-day forecast horizon per SKU
+        risk_demand_item = (forecasted_risk_period.groupby("item_id")["sales_pred"].sum())
+
+        #calculate the safety stock
+        safety_stock = self._safety_stock(type='rmse')# should be series
+        # order_up_to (S)
+        order_up_to = risk_demand_item.add(safety_stock,fill_value=0.0)
+        inventory_position = ( on_hand_current.reindex(order_up_to.index, fill_value=0.0)
+            + on_order.reindex(order_up_to.index, fill_value=0.0) )
+
+        order_qty = ( order_up_to - inventory_position).clip(lower=0.0)
+
+        return order_qty, order_up_to
+
+    def daily_update(self,on_hand:pd.Series,arriving_qty:pd.Series,actual_sales_day:pd.Series):
+
+        on_hand = on_hand.add(arriving_qty,fill_value=0.0) 
+        
+        fulfilled_sales = pd.concat([on_hand,actual_sales_day],axis=1).min(axis=1)
+
+        lost_sales = (actual_sales_day.sub(fulfilled_sales,fill_value=0.0).clip(lower=0.0)) #no negative
+
+        on_hand = (on_hand.sub(fulfilled_sales,fill_value=0.0).clip(lower=0))
+
+        holding_cost = (on_hand*self.daily_unit_holding_cost)
+        stockout_cost = (lost_sales*self.stockout_penalty)
+
+        return (on_hand,lost_sales,holding_cost,stockout_cost)
 
 
+    def daily_simulation(self,actual_sales:pd.DataFrame,forecasted_demand:pd.DataFrame,
+                        ):
 
-        return 
+        dates = forecasted_demand['date'].unique().tolist()
+
+        initial_forecast_origin = forecasted_demand['date'].min()
+
+        # retrieve the inventory on hand and arriving on the date 
+        
     
 
+        for day in dates:
+            inventory_on_day = self.inventory[self.inventory['date']==day]
 
+            on_hand = inventory_on_day.groupby('item_id')['on_hand']
+            on_arrival = inventory_on_day.groupby('item_id')['arrival_qty']
+            
+            # if the day is review day, make orders for the next period
+            if day % self.review_period:
+                # get the forecasted demand in current risk period
+                forecast_origin = initial_forecast_origin + pd.Timedelta(days=self.review_period)
+                risk_period_end = forecast_origin + pd.Timedelta(days=self.risk_period - 1)
+                risk_period_forecast = forecasted_demand[
+                    forecasted_demand['date'].between(forecast_origin, risk_period_end)
+                ].copy()
 
+                
+                order_qty,order_up_to = self.generate_order(
+                    forecasted_risk_period=risk_period_forecast,on_hand_current=on_hand,
+                    on_order= on_arrival)
+                
+                
 
+                self
+
+                
+                
 
 
 
@@ -73,7 +157,6 @@ def calculate_error_statistics(df_with_error: pd.DataFrame) -> pd.DataFrame:
         df_with_error.groupby("item_id",observed=True)["cum_error"]
         .agg(
             rmse_tau=lambda x: np.sqrt((x.dropna() ** 2).mean()),
-            mae_tau=lambda x: x.dropna().abs().mean(),
             n_obs=lambda x: x.dropna().shape[0],
         )
         .reset_index()
@@ -96,26 +179,12 @@ def generate_inventory_policy(df: pd.DataFrame, error_stats: pd.DataFrame, lead_
 
     # Safety Stock and Order-Up-To calculations
     policy["safety_stock_rmse"] = k_factor * policy["rmse_tau"]
-    policy["safety_stock_mae"] = k_factor * policy["mae_tau"]
     policy["order_up_to_rmse"] = ( policy["forecast_tau"] + policy["safety_stock_rmse"] )
-    policy["order_up_to_mae"] = ( policy["forecast_tau"] + policy["safety_stock_mae"] )
 
     # Classical baseline comparison (Standard deviation over lead time)
     # Future production rows do not have observed sales yet.  Use historical demand
     # for the classical-demand variability estimate in that case.
     demand_source = demand_history if demand_history is not None else df
-    if sales_col not in demand_source.columns:
-        raise ValueError(
-            f"demand_history must contain '{sales_col}' when generating a production policy."
-        )
-    raw_std = demand_source.groupby("item_id", observed=True)[sales_col].std().rename("raw_demand_std")
-    policy = policy.merge(raw_std, on="item_id")
-    policy["safety_stock_classical"] = (
-        k_factor * policy["raw_demand_std"] * np.sqrt(tau)
-    )
-    policy["order_up_to_classical"] = (
-        policy["forecast_tau"] + policy["safety_stock_classical"]
-    )
 
     return policy
 
@@ -154,9 +223,11 @@ def calculate_inventory_costs(df: pd.DataFrame,
 
 
 def run_inventory_pipeline(current_raw: pd.DataFrame | None,
-                           current_forecast: pd.DataFrame,
+                           forecasted_demand: pd.DataFrame,
                            oos_error: pd.DataFrame | None = None,
-                           review_period:int=7,lead_time:int=4,
+                           review_period:int=
+                           
+                           7,lead_time:int=4,
                            holding_cost_per_unit:int=0.02,
                            demand_history: pd.DataFrame | None = None,
                            return_details: bool = False) -> pd.Series | dict[str, pd.DataFrame | pd.Series]:
