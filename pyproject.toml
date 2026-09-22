@@ -1,3 +1,7 @@
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
 [project]
 name = "retail-forecast-system"
 version = "0.1.0"
@@ -16,6 +20,7 @@ dependencies = [
     "pandas>=2.3.3",
     "plotly>=7.0.0",
     "psycopg2-binary>=2.9.12",
+    "pytest>=9.1.1",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
     "statsmodels>=0.14.6",

@@ -98,7 +98,12 @@ def fva(baseline_wmape, model_wmape):
     return round((baseline_wmape - model_wmape)*100 / baseline_wmape,2)
 
 
-def get_all_metrics(train_df:pd.DataFrame,test_df:pd.DataFrame,pred_df:pd.DataFrame)->dict:
+def get_all_metrics(
+        train_df:pd.DataFrame,
+        test_df:pd.DataFrame,
+        pred_df:pd.DataFrame,
+        risk_period:int
+    )->dict:
 
     '''return all metrics as a dict '''
 
@@ -108,7 +113,71 @@ def get_all_metrics(train_df:pd.DataFrame,test_df:pd.DataFrame,pred_df:pd.DataFr
 
     get_mae_dept = mae_dept(test_df,pred_df)
     get_mae_cat = mae_cat(test_df,pred_df)
+    get_cum_erros = compute_cumulative_metrics(test_df,pred_df,tau=risk_period)
 
-    # get_holding_cost = 
+    
 
-    return {'wrmsse':get_wrmsse,'MAE':get_mae,'BIAS%':get_bias,'MAE-DEPT-AGG':get_mae_dept,'MAE-CAT-AGG':get_mae_cat}
+    return {'wrmsse':get_wrmsse,
+            'MAE':get_mae,
+            'BIAS%':get_bias,
+            'cum_BIAS': get_cum_erros['cumulative_bias'].mean(),
+            'cum_MAE' : get_cum_erros['cumulative_mae'].mean()}
+
+import pandas as pd
+
+import pandas as pd
+
+def compute_cumulative_metrics(
+    test_df: pd.DataFrame,
+    predicted_df: pd.DataFrame,
+    tau: int = 6
+) -> pd.DataFrame:
+    
+    # 1. Ensure date types match
+    test_df = test_df.copy()
+    predicted_df = predicted_df.copy()
+    test_df["date"] = pd.to_datetime(test_df["date"])
+    predicted_df["date"] = pd.to_datetime(predicted_df["date"])
+    
+    # 2. Merge and drop any unaligned null rows immediately
+    df = (
+        test_df
+        .merge(predicted_df, on=["item_id", "date"], how="inner")
+        .dropna(subset=["sales", "sales_pred"])
+        .sort_values(["item_id", "date"])
+        .reset_index(drop=True)
+    )
+
+    if df.empty:
+        raise ValueError("Merged DataFrame is empty! Check item_id and date column alignment.")
+
+    # 3. Create tau_chunk index per item
+    df["tau_chunk"] = df.groupby("item_id", observed=True).cumcount() // tau
+    
+    # 4. Running cumulative sums per tau chunk
+    df["actual_cum"] = df.groupby(["item_id", "tau_chunk"], observed=True)["sales"].cumsum()
+    df["forecast_cum"] = df.groupby(["item_id", "tau_chunk"], observed=True)["sales_pred"].cumsum()
+    df["cum_error"] = df["forecast_cum"] - df["actual_cum"]
+    
+    # 5. First aggregate per tau chunk
+    chunk_metrics = (
+        df.groupby(["item_id", "tau_chunk"], observed=True)
+        .agg(
+            final_tau_error=("cum_error", "last"),
+            mean_tau_tracking_error=("cum_error", lambda x: x.abs().mean())
+        )
+        .reset_index()
+    )
+    
+    # 6. Average across all tau chunks per SKU
+    sku_summary = (
+        chunk_metrics.groupby("item_id", observed=True)
+        .agg(
+            cumulative_mae=("final_tau_error", lambda x: x.abs().mean()),
+            cumulative_bias=("final_tau_error", "mean"),
+            tracking_trajectory_mae=("mean_tau_tracking_error", "mean")
+        )
+        .reset_index()
+    )
+
+    return sku_summary

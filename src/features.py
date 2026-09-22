@@ -9,30 +9,41 @@ Update necessarily according to the problem.
 import os 
 import numpy as np
 import pandas as pd
-from typing import list,dict,Any
+from typing import Any
 
+import time 
+import os 
+import numpy as np
+import pandas as pd
+from typing import Any
 import time 
 
 class FeatureBuilder():
 
-    def __init__(self, lags: list[int] = [7, 28, 60, 90],
+    def __init__(
+        self, 
+        lags: list[int] = [7, 28, 60, 90],
         rolling_means: list[int] = [7, 28, 60, 90],
         rolling_maxs: list[int] = [7, 28, 60, 90],
         rolling_on_lags: dict[int, list[int]] = {28: [7, 28]},
-        col_names:dict = {'item_col':'item_id','dept_col':'dept_id','cat_col':'cat_id',
-                        'store_col':'store_id','state_col':'state_id','price_col':'sell_price',
-                        'week_col':'wm_yr_wk','target':'sales','date_col':'date'}):
-
+        col_names: dict = {
+            'item_col': 'item_id', 'dept_col': 'dept_id', 'cat_col': 'cat_id',
+            'store_col': 'store_id', 'state_col': 'state_id', 'price_col': 'sell_price',
+            'week_col': 'wm_yr_wk', 'target': 'sales', 'date_col': 'date'
+        }
+    ):
         self.lags = lags
         self.rolling_means = rolling_means
         self.rolling_maxs = rolling_maxs
         self.rolling_on_lags = rolling_on_lags
         
         # Base metadata columns that should NEVER be used as model inputs
+        # any cols with direct relation with target like revenue, should also be removed
+        # otherwise, code will run but with faulty predictions.
         self.excluded_metadata = {
-            "date", "sales", "origin_date", "target_date", "target_sales",
-            "d", "wm_yr_wk", "event_name_1", "event_name_2", "event_type_1", "event_type_2",
-             "store_id", "state_id"
+            'id', 'weekday', 'date', 'sales', 'revenue','origin_date', 'target_date', 'target_sales',
+            'd', 'wm_yr_wk', 'event_name_1', 'event_name_2', 'event_type_1', 'event_type_2',
+            'store_id', 'state_id','snap_TX','snap_WI'
         }
 
         self.id_col = col_names['item_col']
@@ -40,26 +51,25 @@ class FeatureBuilder():
         self.dept_col = col_names['dept_col']
         self.cat_col = col_names['cat_col']
         self.price_col = col_names['price_col']
-        self.week_col  = col_names['week_col']
-        self.target_col  = col_names['target']
+        self.week_col = col_names['week_col']
+        self.target_col = col_names['target']
         self.store_col = col_names['store_col']
         self.state_col = col_names['state_col']
-        
 
     # ---------- validation ----------
     def _require_datetime(self, df: pd.DataFrame, df_name: str):
         if self.date_col not in df.columns:
             raise ValueError(f"{df_name} missing required '{self.date_col}' column")
         if not np.issubdtype(df[self.date_col].dtype, np.datetime64):
-            df['date'] = pd.to_datetime(df['date'])
-            return df 
-    # ---------- validation ----------
+            df[self.date_col] = pd.to_datetime(df[self.date_col])
+        return df 
+
     def _validate_columns(self, df: pd.DataFrame, required: list[str], df_name: str = "df"):
         missing = [c for c in required if c not in df.columns]
         if missing:
             raise ValueError(f"{df_name} missing required columns: {missing}")
-    # ---------- unified lags & rolling features ----------
 
+    # ---------- unified lags & rolling features ----------
     def add_lags_and_rollings(
         self,
         df: pd.DataFrame,
@@ -68,23 +78,32 @@ class FeatureBuilder():
         rolling_maxs: list[int] | None = None,
         rolling_on_lags: dict[int, list[int]] | None = None,
     ) -> pd.DataFrame:
-        """Computes all lag and rolling features in a single pass over the grouped target."""
+        """Computes all lag and rolling features in a single pass while preserving exact row index alignment."""
         lags = self.lags if lags is None else lags
         rolling_means = self.rolling_means if rolling_means is None else rolling_means
         rolling_maxs = self.rolling_maxs if rolling_maxs is None else rolling_maxs
         rolling_on_lags = self.rolling_on_lags if rolling_on_lags is None else rolling_on_lags
-        # Single GroupBy object for target column
+
+        # Ensure dataset is sorted strictly by item and date
+        df = df.sort_values([self.id_col, self.date_col]).reset_index(drop=True)
         gb_target = df.groupby(self.id_col, observed=True)[self.target_col]
+
         # 1. Standard lags
         for lag in lags:
             df[f"lag_{lag}"] = gb_target.shift(lag)
-        # 2. Shifted rolling mean and max (shift(1) prevents lookahead leakage)
+
+        # 2. Shifted target to prevent lookahead leakage for rolling features (t-1)
         target_shifted = gb_target.shift(1)
+        # gb_shifted = target_shifted.groupby(df[self.id_col], observed=True)
+
         for wdw in rolling_means:
-            df[f"rolling_mean_{wdw}"] = target_shifted.rolling(wdw).mean().reset_index(level=0, drop=True)
+            # transform / rolling directly matches df.index without dropping levels
+            df[f"rolling_mean_{wdw}"] = target_shifted.transform(lambda x: x.rolling(wdw).mean())
+
         for wdw in rolling_maxs:
-            df[f"rolling_max_{wdw}"] = target_shifted.rolling(wdw).max().reset_index(level=0, drop=True)
-        # 3. Rolling statistics on top of a lag (e.g., lag 28 rolling mean)
+            df[f"rolling_max_{wdw}"] = target_shifted.transform(lambda x: x.rolling(wdw).max())
+
+        # 3. Rolling statistics on top of a specific lag (e.g., lag 28 rolling mean)
         if rolling_on_lags:
             for lag, windows in rolling_on_lags.items():
                 lag_col = f"lag_{lag}"
@@ -92,8 +111,10 @@ class FeatureBuilder():
                     df[lag_col] = gb_target.shift(lag)
                 gb_lag = df.groupby(self.id_col, observed=True)[lag_col]
                 for wdw in windows:
-                    df[f"rolling_lag_{lag}_win_{wdw}"] = gb_lag.rolling(wdw).mean().reset_index(level=0, drop=True)
+                    df[f"rolling_lag_{lag}_win_{wdw}"] = gb_lag.transform(lambda x: x.rolling(wdw, min_periods=1).mean())
+
         return df
+
     # ---------- trend features ----------
     def add_trend_features(
         self,
@@ -104,13 +125,16 @@ class FeatureBuilder():
         if mean_col_short in df.columns and mean_col_long in df.columns:
             df["selling_trend"] = df[mean_col_short] / (df[mean_col_long] + 1e-5)
         return df
+
     # ---------- price features ----------
     def add_price_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         group = [self.id_col, self.store_col]
+        
         # Price change relative to 7 days ago
         price_lag_7 = df.groupby(group, observed=True)[self.price_col].shift(7)
         df["delta_price_weekn-1"] = ((df[self.price_col] - price_lag_7) / price_lag_7).where(price_lag_7 > 0)
+        
         # Expanding historical price statistics
         df["price_historical_mean"] = df.groupby(group, observed=True)[self.price_col].transform(
             lambda x: x.shift(1).expanding().mean()
@@ -121,6 +145,7 @@ class FeatureBuilder():
             (df[self.price_col] < df["price_historical_mean"]).astype("int8"),
             np.nan,
         )
+        
         # Relative price compared with other products in the same department
         dept_week_group = [self.dept_col, self.week_col, self.store_col]
         if all(col in df.columns for col in dept_week_group):
@@ -133,6 +158,7 @@ class FeatureBuilder():
             df = df.merge(dept_mean_price, on=dept_week_group, how="left")
             df["delta_price_rltv_dept"] = df[self.price_col] / df["dept_mean_price"]
         return df
+
     # ---------- main orchestrator ----------
     def build(
         self,
@@ -144,9 +170,11 @@ class FeatureBuilder():
     ) -> tuple[pd.DataFrame, list[str]]:
         """Main entry point. Builds all features and returns (featured_df, feature_column_names)."""
         df = df.copy()
+        
         # 1. Price features
         if self.price_col in df.columns and "price_historical_mean" not in df.columns:
             df = self.add_price_features(df)
+            
         # 2. Unified lags & rolling statistics
         df = self.add_lags_and_rollings(
             df,
@@ -155,49 +183,51 @@ class FeatureBuilder():
             rolling_maxs=rolling_maxs,
             rolling_on_lags=rolling_on_lags,
         )
+        
         # 3. Short vs long-term trend
         df = self.add_trend_features(df)
-        # 4. Safe feature extraction (all columns except raw metadata/targets)
+        
+        # 4. Feature extraction
         feature_names = [col for col in df.columns if col not in self.excluded_metadata]
         return df, feature_names
+
     # ---------- recursive next-day predictor ----------
     def build_next_day_features(
         self,
         history_df: pd.DataFrame,
         next_day_df: pd.DataFrame,
-        dynamic_feats: dict[str, Any] | None = None,
     ) -> pd.DataFrame:
         """Prepares lag/rolling features for a single future day during recursive forecasting."""
-        assert (next_day_df[self.date_col].unique()[0] - history_df[self.date_col].max()).days == 1, (
-            "AssertionError: Non-consecutive target date given."
+        target_date = next_day_df[self.date_col].unique()[0]
+        max_hist_date = history_df[self.date_col].max()
+        
+        assert (pd.to_datetime(target_date) - pd.to_datetime(max_hist_date)).days == 1, (
+            f"Non-consecutive target date given: history max is {max_hist_date}, next day is {target_date}"
         )
-        feats = dynamic_feats or {
-            "lags": self.lags,
-            "rolling_mean": self.rolling_means,
-            "rolling_max": self.rolling_maxs,
-            "rolling_on_lag": self.rolling_on_lags,
-        }
+  
         next_day = next_day_df.copy()
         next_day[self.target_col] = np.nan
-        # Append next day placeholder to history
+        
+        # Combine history with next_day placeholder
         hist_updated = (
             pd.concat([history_df, next_day], ignore_index=True)
             .sort_values([self.id_col, self.date_col])
             .reset_index(drop=True)
         )
-        # Apply unified lag & rolling computation
+        
+        # Re-compute lag & rolling features cleanly
         hist_updated = self.add_lags_and_rollings(
             hist_updated,
-            lags=feats.get("lags"),
-            rolling_means=feats.get("rolling_mean"),
-            rolling_maxs=feats.get("rolling_max"),
-            rolling_on_lags=feats.get("rolling_on_lag"),
+            lags=self.lags,
+            rolling_means=self.rolling_means,
+            rolling_maxs=self.rolling_maxs,
+            rolling_on_lags=self.rolling_on_lags
         )
+        
         hist_updated = self.add_trend_features(hist_updated)
-        target_date = next_day[self.date_col].unique()[0]
-        return hist_updated[hist_updated[self.date_col] == target_date]
 
-
+        # Return only target date rows
+        return hist_updated[hist_updated[self.date_col] == target_date].copy()
 
 class TrainTestPrepare():
 
@@ -247,8 +277,11 @@ class TrainTestPrepare():
         return direct_train, direct_feature_cols
 
     @staticmethod
-    def build_direct_test_frame(future_df:pd.DataFrame,history_df:pd.DataFrame,original_feature_cols:list[str],
-                                 target_known_cols:list[str],max_horizon:int=28)->tuple[pd.DataFrame,list]:
+    def build_direct_test_frame(future_df:pd.DataFrame,
+                                history_df:pd.DataFrame,
+                                original_feature_cols:list[str],
+                                 target_known_cols:list[str],
+                                 max_horizon:int=28)->pd.DataFrame:
         '''future_df: test_data
         history_df: train_data with full features including lag and rolling features'''
         # One latest forecast origin per item.

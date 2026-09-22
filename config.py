@@ -15,7 +15,7 @@ PIPELINE_CONFIG = {
     
     # Backtest Setup
     "backtest_mode": "rolling",
-    "training_window": 365,
+    "training_window": 730,
     "horizon_days": 28,
     "step_size": 28,
     "max_windows": 10,  # last 8 windows, chronological
@@ -23,8 +23,8 @@ PIPELINE_CONFIG = {
     # Model
     "model": "lgbm",
     "forecast_type": "direct",  # "direct" or "recursive"
-    "use_log_transform": True, # for scaling 
-    "categorical_cols": ["item_hash", "cat_hash", "dept_hash"],
+    "use_log_transform": False, # for scaling 
+    "categorical_cols": ["item_id", "cat_id", "dept_id"],
 
     # Inventory Policy
     "lead_time": 4,

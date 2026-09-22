@@ -1,36 +1,30 @@
 """
-Training. HistGradientBoostingRegressor is the default engine: fast, handles NaN
-natively, no external deps. XGBoost / LightGBM are used automatically IF installed
--- same interface, so `pip install  lightgbm` lights them up with no code
-change.
-
-Two independent options, both explicit, neither hardcoded:
-  - use_log_transform: model log1p(units) and invert on predict. Stabilises variance
-    for right-skewed, non-negative demand data -- but whether it actually helps is an
-    empirical question per dataset, same as the 730-day window was. Test with/without.
-  - categorical_cols: if given, those columns are passed through as native pandas
-    'category' dtype and each engine's own categorical-split logic is used (no
-    encoding). If None, every column must already be plain numeric (e.g. your own
-    .cat.codes convention) -- this is checked and raised on, not assumed.
+Training module for gradient boosting regressors (HistGradientBoostingRegressor & LightGBM).
+Handles target transformation (log1p), categorical features, and quantile forecasting.
 """
+
 from __future__ import annotations
+from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-DEFAULT_QUANTILES = [0.10,0.90]
+DEFAULT_QUANTILES = [0.10, 0.90]
 
-def _make_model(kind: str, quantile: float | None = None, categorical_cols: list[str] | None = None):
+
+def _make_model(
+    kind: str,
+    quantile: float | None = None,
+    categorical_cols: list[str] | None = None,
+) -> Any:
     has_cats = bool(categorical_cols)
 
     if kind == "hgb":
-        # sklearn >=1.4 required for categorical_features="from_dtype"
-        if quantile is not None:
-            loss = 'quantile'
-        else:
-            loss = 'squared_error'
+        loss = 'quantile' if quantile is not None else 'squared_error'
 
-        return HistGradientBoostingRegressor(loss=loss, quantile=quantile,
+        return HistGradientBoostingRegressor(
+            loss=loss,
+            quantile=quantile,
             max_iter=400,
             learning_rate=0.05,
             max_depth=None,
@@ -43,15 +37,13 @@ def _make_model(kind: str, quantile: float | None = None, categorical_cols: list
         )
 
     if kind == "lgbm":
-        from lightgbm import LGBMRegressor  # optional
-        if quantile is not None:
-            objective = 'quantile'
-            
-        else:
-            objective = 'tweedie'
+        from lightgbm import LGBMRegressor  # optional dependency
+        objective = 'quantile' if quantile is not None else 'tweedie'
 
-        return LGBMRegressor(objective=objective,quantile=quantile,
-                             tweedie_variance_power=1.2,
+        return LGBMRegressor(
+            objective=objective,
+            quantile=quantile,
+            tweedie_variance_power=1.2,
             n_estimators=200,
             learning_rate=0.05,
             num_leaves=31,
@@ -59,6 +51,7 @@ def _make_model(kind: str, quantile: float | None = None, categorical_cols: list
             colsample_bytree=0.8,
             random_state=42,
         )
+
     raise ValueError(f'Unknown model: {kind}')
 
 
@@ -72,13 +65,10 @@ def available_models() -> list[str]:
     return models
 
 
-def _check_features(X: pd.DataFrame, categorical_cols: list[str] | None):
+def _check_features(X: pd.DataFrame, categorical_cols: list[str] | None) -> None:
     """
-    If categorical_cols is given: those columns must be pandas 'category' dtype
-    (native mode) -- everything else must be numeric.
-    If categorical_cols is None: every column must be numeric (your .cat.codes
-    convention) -- silently receiving a leftover category-dtype column here would
-    break native handling that was never requested.
+    Validates that declared categorical columns are pandas 'category' dtype
+    and all other features are numeric.
     """
     categorical_cols = categorical_cols or []
     for col in categorical_cols:
@@ -101,39 +91,47 @@ def _check_features(X: pd.DataFrame, categorical_cols: list[str] | None):
 
 class SelectModel:
     """Thin wrapper: optional log1p target transform + chosen GBM engine +
-    optional native categorical handling. No notion of recursive vs. direct
-    forecasting -- that's orchestration (pipeline.py), not a model concern.
+    optional native categorical handling.
     """
 
-    def __init__(self, model: str = "lgbm", quantiles:list[float] | None=None,use_log_transform: bool = True,
-                 categorical_cols: list[str] | None = None):
-        
+    def __init__(
+        self,
+        model: str = "lgbm",
+        quantiles: list[float] | None = None,
+        use_log_transform: bool = True,
+        categorical_cols: list[str] | None = None,
+    ):
         self.kind = model
         self.use_log_transform = use_log_transform
         self.categorical_cols = categorical_cols
-        
+
         self.features: list[str] | None = None
 
         self.quantiles = quantiles is not None
-        self.quantile_levels = (quantiles if quantiles is not None else DEFAULT_QUANTILES.copy() )
+        self.quantile_levels = (
+            quantiles if quantiles is not None else DEFAULT_QUANTILES.copy()
+        )
 
-        # point forecast model            
-        self.model_point = _make_model(kind=self.kind,quantile=None, categorical_cols=self.categorical_cols)
+        # Point forecast model
+        self.model_point = _make_model(
+            kind=self.kind, quantile=None, categorical_cols=self.categorical_cols
+        )
 
-        ### get the quantile models--> optional
-        self.quantile_models = {}
+        # Quantile forecast models
+        self.quantile_models: Dict[str, Any] = {}
 
         if self.quantiles:
             if any(q <= 0 or q >= 1 for q in self.quantile_levels):
                 raise ValueError("All quantile levels must be strictly between 0 and 1.")
 
-            self.quantile_models = { f'q{int(q*100)}': _make_model( kind = self.kind, 
-                                                quantile= q,
-                                                categorical_cols=self.categorical_cols)
-                                                for q in self.quantile_levels 
-                                                }
-        
-
+            self.quantile_models = {
+                f'q{int(q*100)}': _make_model(
+                    kind=self.kind,
+                    quantile=q,
+                    categorical_cols=self.categorical_cols,
+                )
+                for q in self.quantile_levels
+            }
 
     def _prep(self, X: pd.DataFrame) -> pd.DataFrame:
         _check_features(X, self.categorical_cols)
@@ -143,49 +141,48 @@ class SelectModel:
                 X[col] = X[col].astype("category")
         return X
 
-    def fit(self, X, y):
-        X = self._prep(X)
-        self.features = list(X.columns)
-        target = np.log1p(np.asarray(y, dtype=float)) if self.use_log_transform else np.asarray(y, dtype=float)
+    def fit(self, X: pd.DataFrame, y: Any) -> SelectModel:
+        X_prep = self._prep(X)
+        self.features = list(X_prep.columns)
+        target = (
+            np.log1p(np.asarray(y, dtype=float))
+            if self.use_log_transform
+            else np.asarray(y, dtype=float)
+        )
 
+        # Fit point model
         if self.kind == "lgbm" and self.categorical_cols:
-            # point forecast
-            self.model_point.fit(X, target, categorical_feature=self.categorical_cols)
-
+            getattr(self.model_point, "fit")(X_prep, target, categorical_feature=self.categorical_cols)
         else:
-            self.model_point.fit(X, target)
+            self.model_point.fit(X_prep, target)
 
-        # quantile forecasts
-            
+        # Fit quantile models
         if self.quantiles:
             for qval, quantmodel in self.quantile_models.items():
-                if self.kind=='lgbm' and self.categorical_cols:
-                    self.quantile_models[qval] = quantmodel.fit(X,target,
-                                                        categorical_feature=self.categorical_cols)
+                if self.kind == "lgbm" and self.categorical_cols:
+                    getattr(quantmodel, "fit")(X_prep, target, categorical_feature=self.categorical_cols)
                 else:
-                    self.quantile_models[qval] = quantmodel.fit(X,target)
+                    quantmodel.fit(X_prep, target)
 
         return self
 
-    def predict(self, X)->dict[str,]:
-
+    def predict(self, X: pd.DataFrame) -> dict[str, np.ndarray]:
         if self.features is not None:
             X = X[self.features]
 
-        X = self._prep(X)
+        X_prep = self._prep(X)
+        preds: dict[str, np.ndarray] = {}
 
-        preds = {}
+        # Point forecast
+        raw_point = np.asarray(self.model_point.predict(X_prep), dtype=float)
+        pred_point = np.expm1(raw_point) if self.use_log_transform else raw_point
+        preds['point'] = np.clip(pred_point, 0.0, None)
 
-        # point forecast
-        raw_pred = self.model_point.predict(X)
-        pred_point = np.expm1(raw_pred) if self.use_log_transform else raw_pred
-        preds['point']  = np.clip(pred_point,0.0,None)
-                
+        # Quantile forecasts
         if self.quantiles:
-            for qval,quantmodel in self.quantile_models.items():
-                raw_pred = quantmodel.predict(X)
-                pred_quantile = np.expm1(raw_pred) if self.use_log_transform else raw_pred
-                preds[qval] = np.clip(pred_quantile,0.0,None)
+            for qval, quantmodel in self.quantile_models.items():
+                raw_q = np.asarray(quantmodel.predict(X_prep), dtype=float)
+                pred_quantile = np.expm1(raw_q) if self.use_log_transform else raw_q
+                preds[qval] = np.clip(pred_quantile, 0.0, None)
 
-       
-        return preds# demand can't be negative
+        return preds

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 from pathlib import Path 
 import json 
-import datetime
+from datetime import datetime
 from typing import Any 
 import numpy as np 
 import logging

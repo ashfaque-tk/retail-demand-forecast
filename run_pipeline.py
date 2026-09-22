@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 import time
-import datetime
+from datetime import datetime
 import pandas as pd
 from config import (
     BASE_DIR,
@@ -23,8 +23,11 @@ from config import (
 )
 from src.data_checks import validate_raw
 from src.backtest_engine import BacktestEngine, DeploymentResult
+from src.backtest_windows import generate_rolling_windows
 from src.utils import log_experiment_results  
 from src.features import FeatureBuilder
+
+from scripts.generate_report import generate_experiment_html_report
 
 # logging initiation
 logging.basicConfig(
@@ -91,15 +94,7 @@ def main():
     
     # Take a small sample to see what features FeatureBuilder generates
     sample_df = train_df[train_df["item_id"] == train_df["item_id"].iloc[0]].tail(150)
-    sample_features = feat_builder.build(sample_df)
-    
-    # Everything generated that isn't metadata/target is a feature
-    non_feature_cols = [
-        "date", "sales", "origin_date", "target_date", "target_sales",
-        "store_id", "state_id", "item_id", "cat_id", "dept_id"
-    ]
-
-    full_features = [col for col in sample_features.columns if col not in non_feature_cols]
+    _,full_features = feat_builder.build(sample_df)
     
     logger.info("Dynamically detected %d feature columns: %s", len(full_features), full_features[:5])
     # 3. Build Engine with dynamic feature names
@@ -112,7 +107,6 @@ def main():
             historical_data=train_df,
             future_static_data=test_df,
             calibration_days=PIPELINE_CONFIG.get("horizon_days", 28),
-            evaluate_baselines=True,
         )
         artifact_dir = save_deployment_artifacts(deployment, engine)
         logger.info("[3/3] Deployment complete. Artifacts saved to %s", artifact_dir)
@@ -131,12 +125,31 @@ def main():
             "features": full_features,
             "duration_sec": duration_sec,
         }
-        log_experiment_results(RESULTS_DIR / "experiments.json", record)
+        
+        print(f"####### BACKTEST METRICS #######")
+        print(metrics_df,'\n' )
+        print(f'####### BACKTEST FVA_RESULTS ########')
+        print(fva_df)
         # Print executive summary
         print("\n" + "=" * 60)
         print("BACKTEST METRICS SUMMARY")
         print("=" * 60)
-        print(metrics_df.groupby("model")[["MAE", "wrmsse"]].mean())
+        # generate html report 
+        model = PIPELINE_CONFIG.get('model','lgbm')
+        type = PIPELINE_CONFIG.get('forecast_type','recursive')
+        training_yr = PIPELINE_CONFIG.get('training_window',730)//365
+        timestamp_str = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+        lead_time = PIPELINE_CONFIG.get('lead_time',4)
+        review_period = PIPELINE_CONFIG.get('review_period',7)
+        
+        # log experimental raw data
+        log_experiment_results(RESULTS_DIR / f"expts/backtest_expt_{model}_{type}_{training_yr}yr_{timestamp_str}.json", record)
+        report_out = RESULTS_DIR/f'backtest_expt_report_{model}_{type}_{training_yr}yr_{timestamp_str}.html'
+        generate_experiment_html_report(metrics_df=metrics_df,fva_df=fva_df,
+                                        output_path=report_out,lead_time=lead_time,
+                                        review_period=review_period,
+                                        model_type=type,
+                                        train_years=training_yr)
         return metrics_df, fva_df, window_results
     else:
         raise ValueError(f"Unknown mode: {run_mode}. Expected 'experiment' or 'deploy'.")

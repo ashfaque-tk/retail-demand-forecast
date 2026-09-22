@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from src.features import FeatureBuilder, TrainTestPrepare
-from src.models_train import SelectModel
+from src.model_selector import SelectModel
 
 
 
@@ -39,6 +39,7 @@ def _infer_dynamic_feats(full_feats) -> dict:
     rolling_on_lag = sorted({int(m.group(1)) for c in full_feats if (m := on_lag_pat.match(c))})
 
     missing_lag_deps = set(rolling_on_lag) - set(lags)
+ 
     if missing_lag_deps:
         raise ValueError(
             f"rolling_on_lag needs lag_{sorted(missing_lag_deps)} recomputed on every "
@@ -56,7 +57,6 @@ def _infer_dynamic_feats(full_feats) -> dict:
 
 class Forecaster():
 
-    
     def __init__(self, model:SelectModel, feature_builder:FeatureBuilder, original_features:list[str], forecast_type:str='recursive',
                  max_horizon_days:int=28):
         '''model: Already fitted SelectModel instance
@@ -73,16 +73,22 @@ class Forecaster():
 
         self.max_horizon = max_horizon_days
 
-    def _get_model_feature_importance(self):
-        ''' returns the fit model's feature importances'''
-        importances = self.model['point'].feature_importances_
+    def get_model_feature_importance(self) -> pd.Series:
+            """Returns the fit model's feature importances as a sorted pandas Series."""
+            # Access the underlying point model attribute on SelectModel
+            if hasattr(self.model.model_point, "feature_importances_"):
+                importances = self.model.model_point.feature_importances_
+            else:
+                raise AttributeError(
+                    f"The fitted engine '{self.model.kind}' does not expose 'feature_importances_'."
+                )
 
-        # 2. Map to feature names for scannability
-        importance_series = pd.Series(importances, index=self.full_features)
-        
-        # 3. Return sorted Series (highest importance first)
-        return importance_series.sort_values(ascending=False)
+            # 2. Map to feature names for scannability
+            importance_series = pd.Series(importances, index=self.full_features)
 
+            # 3. Return sorted Series (highest importance first)
+            return importance_series.sort_values(ascending=False)
+    
     def forecast( self, train_df: pd.DataFrame, test_df: pd.DataFrame,  max_lookback_days: int = 100) -> pd.DataFrame:
                 """Dispatches to direct or recursive forecast without engine-level logic."""
                 if self.forecast_type == 'direct':
@@ -107,10 +113,6 @@ class Forecaster():
         self.model.fit(X_train,y_train)
 
         ##### recursive prediction, feeding back predicted sales as inputs for lag features for tomorrow
-        
-        full_feats = train_df.columns
-        dynamic_feats = _infer_dynamic_feats(full_feats)
-
         cutoff_date = train_df['date'].max() - pd.Timedelta(days=max_lookback_days)
         history_slice = train_df[train_df['date'] >= cutoff_date].copy()
 
@@ -120,8 +122,7 @@ class Forecaster():
 
         logger.info(
             "Recursive forecast starting: %d day(s) x %d item(s), lookback=%d days, "
-            "dynamic_feats=%s", total_dates, n_items, max_lookback_days, dynamic_feats
-        )
+        , total_dates, n_items, max_lookback_days )
 
         all_results = []
         for step, current_date in enumerate(dates, start=1):
@@ -129,11 +130,10 @@ class Forecaster():
 
             next_day = test_df[test_df['date'] == current_date].copy()  # all static feats
             next_day_dynamic_feats = self.feature_builder.build_next_day_features(
-                history_slice, next_day, dynamic_feats=dynamic_feats
-            )
+                history_slice, next_day )
 
             next_day_full_feats = next_day_dynamic_feats[self.full_features]
-
+         
             assert set(next_day_full_feats['item_id'].unique().tolist()) == set(
                 train_df['item_id'].unique().tolist()
             ), 'AssertionError: items in test_df do not match train_df'
@@ -147,6 +147,7 @@ class Forecaster():
                 'date': current_date,
                 'sales_pred': preds['point'],
             })
+         
             for key, values in preds.items():
                 if key == "point":
                     continue
@@ -168,6 +169,8 @@ class Forecaster():
             )
 
         preds_df = pd.concat(all_results, ignore_index=True) if all_results else pd.DataFrame()
+
+    
         logger.info("Recursive forecast complete: %d rows returned.", len(preds_df))
      
         return preds_df
@@ -208,6 +211,7 @@ class Forecaster():
         X_test = X_direct_test[direct_cols]
 
         # fit the model
+               
         self.model.fit(X_train,y_train)
 
         logger.info('Multi-horizon Direct forecast: Fit complete. Predicting')

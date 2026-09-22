@@ -1,0 +1,815 @@
+[
+  {
+    "timestamp": "2026-09-22T22:50:28.342703",
+    "model": "lgbm",
+    "metrics": [
+      {
+        "window_id": 0,
+        "train_start": "2014-03-31T00:00:00.000",
+        "train_end": "2015-03-31T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.4621428571,
+        "BIAS%": -1.6901408451,
+        "wrmsse": 1.1575789387,
+        "cum_BIAS": -0.24,
+        "cum_MAE": 6.2733333333,
+        "holding_cost": null,
+        "stockout_cost": null,
+        "total_cost": null
+      },
+      {
+        "window_id": 0,
+        "train_start": "2014-03-31T00:00:00.000",
+        "train_end": "2015-03-31T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.2256626984,
+        "BIAS%": -6.7031820553,
+        "wrmsse": 0.8750985387,
+        "cum_BIAS": -0.9518518519,
+        "cum_MAE": 5.9500123457,
+        "holding_cost": null,
+        "stockout_cost": null,
+        "total_cost": null
+      },
+      {
+        "window_id": 0,
+        "train_start": "2014-03-31T00:00:00.000",
+        "train_end": "2015-03-31T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.230646177,
+        "BIAS%": 6.492556332,
+        "wrmsse": 0.820460292,
+        "cum_BIAS": 0.9219429991,
+        "cum_MAE": 5.5067367052,
+        "holding_cost": null,
+        "stockout_cost": null,
+        "total_cost": null
+      },
+      {
+        "window_id": 1,
+        "train_start": "2014-04-28T00:00:00.000",
+        "train_end": "2015-04-28T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.4504761905,
+        "BIAS%": 2.3054755043,
+        "wrmsse": 1.0987757292,
+        "cum_BIAS": 0.32,
+        "cum_MAE": 6.4044444444,
+        "holding_cost": 43958.8687311041,
+        "stockout_cost": 1537.2429312057,
+        "total_cost": 45496.1116623098
+      },
+      {
+        "window_id": 1,
+        "train_start": "2014-04-28T00:00:00.000",
+        "train_end": "2015-04-28T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.1935542328,
+        "BIAS%": -3.4726224784,
+        "wrmsse": 0.8382542262,
+        "cum_BIAS": -0.482,
+        "cum_MAE": 5.4489382716,
+        "holding_cost": 38542.7849586743,
+        "stockout_cost": 1434.4037910604,
+        "total_cost": 39977.1887497346
+      },
+      {
+        "window_id": 1,
+        "train_start": "2014-04-28T00:00:00.000",
+        "train_end": "2015-04-28T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.1724580653,
+        "BIAS%": 8.8953850896,
+        "wrmsse": 0.7609465395,
+        "cum_BIAS": 1.2346794504,
+        "cum_MAE": 4.9500898589,
+        "holding_cost": 39028.6434920096,
+        "stockout_cost": 1381.1749867999,
+        "total_cost": 40409.8184788095
+      },
+      {
+        "window_id": 2,
+        "train_start": "2014-05-26T00:00:00.000",
+        "train_end": "2015-05-26T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.52,
+        "BIAS%": 0.7907051799,
+        "wrmsse": 1.2822623776,
+        "cum_BIAS": 0.1088888889,
+        "cum_MAE": 6.9555555556,
+        "holding_cost": 48809.8231362721,
+        "stockout_cost": 264.5572457745,
+        "total_cost": 49074.3803820466
+      },
+      {
+        "window_id": 2,
+        "train_start": "2014-05-26T00:00:00.000",
+        "train_end": "2015-05-26T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.2874801587,
+        "BIAS%": -2.3893281695,
+        "wrmsse": 0.9699439392,
+        "cum_BIAS": -0.329037037,
+        "cum_MAE": 6.5446419753,
+        "holding_cost": 42087.6502487557,
+        "stockout_cost": 264.2690426994,
+        "total_cost": 42351.9192914552
+      },
+      {
+        "window_id": 2,
+        "train_start": "2014-05-26T00:00:00.000",
+        "train_end": "2015-05-26T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.1596946301,
+        "BIAS%": 6.9833781376,
+        "wrmsse": 0.9498759629,
+        "cum_BIAS": 0.9616887626,
+        "cum_MAE": 6.089187208,
+        "holding_cost": 42341.9003765353,
+        "stockout_cost": 214.8121049208,
+        "total_cost": 42556.7124814561
+      },
+      {
+        "window_id": 3,
+        "train_start": "2014-06-23T00:00:00.000",
+        "train_end": "2015-06-23T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.4605952381,
+        "BIAS%": 6.6884737884,
+        "wrmsse": 1.1434625493,
+        "cum_BIAS": 0.8633333333,
+        "cum_MAE": 6.4544444444,
+        "holding_cost": 51091.4982127366,
+        "stockout_cost": 259.6621699434,
+        "total_cost": 51351.16038268
+      },
+      {
+        "window_id": 3,
+        "train_start": "2014-06-23T00:00:00.000",
+        "train_end": "2015-06-23T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.2767367725,
+        "BIAS%": 4.8503629738,
+        "wrmsse": 0.8548677501,
+        "cum_BIAS": 0.6260740741,
+        "cum_MAE": 6.7321975309,
+        "holding_cost": 43614.3125434369,
+        "stockout_cost": 330.2674140265,
+        "total_cost": 43944.5799574633
+      },
+      {
+        "window_id": 3,
+        "train_start": "2014-06-23T00:00:00.000",
+        "train_end": "2015-06-23T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.0794830483,
+        "BIAS%": 13.0250085638,
+        "wrmsse": 0.8509058623,
+        "cum_BIAS": 1.6812391609,
+        "cum_MAE": 6.1311269991,
+        "holding_cost": 43696.7362640515,
+        "stockout_cost": 223.7136052505,
+        "total_cost": 43920.449869302
+      },
+      {
+        "window_id": 4,
+        "train_start": "2014-07-21T00:00:00.000",
+        "train_end": "2015-07-21T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.4544047619,
+        "BIAS%": -6.6007396688,
+        "wrmsse": 1.1657709509,
+        "cum_BIAS": -0.9122222222,
+        "cum_MAE": 6.5144444444,
+        "holding_cost": 50958.273693782,
+        "stockout_cost": 263.6169704749,
+        "total_cost": 51221.8906642569
+      },
+      {
+        "window_id": 4,
+        "train_start": "2014-07-21T00:00:00.000",
+        "train_end": "2015-07-21T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.3235,
+        "BIAS%": -1.7978953387,
+        "wrmsse": 0.8884039133,
+        "cum_BIAS": -0.2484691358,
+        "cum_MAE": 6.9811234568,
+        "holding_cost": 43781.3382999946,
+        "stockout_cost": 527.6803826508,
+        "total_cost": 44309.0186826454
+      },
+      {
+        "window_id": 4,
+        "train_start": "2014-07-21T00:00:00.000",
+        "train_end": "2015-07-21T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.1554094761,
+        "BIAS%": 5.5178738789,
+        "wrmsse": 0.846907653,
+        "cum_BIAS": 0.7625701701,
+        "cum_MAE": 6.3077585742,
+        "holding_cost": 43842.8543315521,
+        "stockout_cost": 388.3874229205,
+        "total_cost": 44231.2417544726
+      },
+      {
+        "window_id": 5,
+        "train_start": "2014-08-18T00:00:00.000",
+        "train_end": "2015-08-18T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.4207142857,
+        "BIAS%": 10.6583629893,
+        "wrmsse": 1.2418980017,
+        "cum_BIAS": 1.3311111111,
+        "cum_MAE": 6.5044444444,
+        "holding_cost": 54108.8472223943,
+        "stockout_cost": 205.4093349423,
+        "total_cost": 54314.2565573366
+      },
+      {
+        "window_id": 5,
+        "train_start": "2014-08-18T00:00:00.000",
+        "train_end": "2015-08-18T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.2986375661,
+        "BIAS%": 10.1399762752,
+        "wrmsse": 1.0151279341,
+        "cum_BIAS": 1.2663703704,
+        "cum_MAE": 6.6480123457,
+        "holding_cost": 45917.5016418308,
+        "stockout_cost": 416.7401677701,
+        "total_cost": 46334.241809601
+      },
+      {
+        "window_id": 5,
+        "train_start": "2014-08-18T00:00:00.000",
+        "train_end": "2015-08-18T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.0917076179,
+        "BIAS%": 20.72624009,
+        "wrmsse": 0.9155644631,
+        "cum_BIAS": 2.5884770957,
+        "cum_MAE": 6.4088117604,
+        "holding_cost": 46673.4651697453,
+        "stockout_cost": 208.1074141026,
+        "total_cost": 46881.5725838479
+      },
+      {
+        "window_id": 6,
+        "train_start": "2014-09-15T00:00:00.000",
+        "train_end": "2015-09-15T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.4578571429,
+        "BIAS%": -11.2164296998,
+        "wrmsse": 1.2157338945,
+        "cum_BIAS": -1.5777777778,
+        "cum_MAE": 6.7466666667,
+        "holding_cost": 51840.5289605481,
+        "stockout_cost": 315.416236813,
+        "total_cost": 52155.9451973611
+      },
+      {
+        "window_id": 6,
+        "train_start": "2014-09-15T00:00:00.000",
+        "train_end": "2015-09-15T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.3333558201,
+        "BIAS%": -3.7718097244,
+        "wrmsse": 0.9102573161,
+        "cum_BIAS": -0.5305679012,
+        "cum_MAE": 6.753617284,
+        "holding_cost": 44014.1047896621,
+        "stockout_cost": 405.7606554363,
+        "total_cost": 44419.8654450984
+      },
+      {
+        "window_id": 6,
+        "train_start": "2014-09-15T00:00:00.000",
+        "train_end": "2015-09-15T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.1945130357,
+        "BIAS%": 3.454231417,
+        "wrmsse": 0.8775030815,
+        "cum_BIAS": 0.4858952193,
+        "cum_MAE": 5.645755875,
+        "holding_cost": 45001.2819214147,
+        "stockout_cost": 185.3209409584,
+        "total_cost": 45186.6028623732
+      },
+      {
+        "window_id": 7,
+        "train_start": "2014-10-13T00:00:00.000",
+        "train_end": "2015-10-13T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.4588095238,
+        "BIAS%": 7.8915970683,
+        "wrmsse": 1.1599931808,
+        "cum_BIAS": 1.0288888889,
+        "cum_MAE": 6.4555555556,
+        "holding_cost": 52459.9795127637,
+        "stockout_cost": 550.5716442397,
+        "total_cost": 53010.5511570034
+      },
+      {
+        "window_id": 7,
+        "train_start": "2014-10-13T00:00:00.000",
+        "train_end": "2015-10-13T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.2202645503,
+        "BIAS%": 3.5808571483,
+        "wrmsse": 0.8448408564,
+        "cum_BIAS": 0.4668641975,
+        "cum_MAE": 5.9039876543,
+        "holding_cost": 44422.8269068284,
+        "stockout_cost": 384.770638669,
+        "total_cost": 44807.5975454974
+      },
+      {
+        "window_id": 7,
+        "train_start": "2014-10-13T00:00:00.000",
+        "train_end": "2015-10-13T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.1561851802,
+        "BIAS%": 16.5589282264,
+        "wrmsse": 0.7862751236,
+        "cum_BIAS": 2.1589162645,
+        "cum_MAE": 5.8825167185,
+        "holding_cost": 44860.8677945801,
+        "stockout_cost": 262.6862587174,
+        "total_cost": 45123.5540532975
+      },
+      {
+        "window_id": 8,
+        "train_start": "2014-11-10T00:00:00.000",
+        "train_end": "2015-11-10T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.3397619048,
+        "BIAS%": 10.0957027585,
+        "wrmsse": 1.2108087739,
+        "cum_BIAS": 1.1955555556,
+        "cum_MAE": 5.9688888889,
+        "holding_cost": 53904.5904123344,
+        "stockout_cost": 200.3084997341,
+        "total_cost": 54104.8989120685
+      },
+      {
+        "window_id": 8,
+        "train_start": "2014-11-10T00:00:00.000",
+        "train_end": "2015-11-10T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.2169854497,
+        "BIAS%": 12.7639123454,
+        "wrmsse": 0.962356292,
+        "cum_BIAS": 1.5115308642,
+        "cum_MAE": 6.449345679,
+        "holding_cost": 46737.6556808554,
+        "stockout_cost": 284.5483578033,
+        "total_cost": 47022.2040386587
+      },
+      {
+        "window_id": 8,
+        "train_start": "2014-11-10T00:00:00.000",
+        "train_end": "2015-11-10T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 2.0053835487,
+        "BIAS%": 20.0049173689,
+        "wrmsse": 0.850065297,
+        "cum_BIAS": 2.3690267702,
+        "cum_MAE": 5.913750831,
+        "holding_cost": 45625.3473856942,
+        "stockout_cost": 161.3836571667,
+        "total_cost": 45786.7310428609
+      },
+      {
+        "window_id": 9,
+        "train_start": "2014-12-08T00:00:00.000",
+        "train_end": "2015-12-08T00:00:00.000",
+        "model": "seasonal_naive",
+        "MAE": 1.2672619048,
+        "BIAS%": -0.7172799255,
+        "wrmsse": 1.2018144152,
+        "cum_BIAS": -0.0855555556,
+        "cum_MAE": 5.4166666667,
+        "holding_cost": 51696.1685974303,
+        "stockout_cost": 403.4425816417,
+        "total_cost": 52099.6111790721
+      },
+      {
+        "window_id": 9,
+        "train_start": "2014-12-08T00:00:00.000",
+        "train_end": "2015-12-08T00:00:00.000",
+        "model": "moving_average",
+        "MAE": 1.1975330688,
+        "BIAS%": 9.5322672463,
+        "wrmsse": 1.0058206501,
+        "cum_BIAS": 1.1369876543,
+        "cum_MAE": 6.2604567901,
+        "holding_cost": 46786.5894966672,
+        "stockout_cost": 627.5827915408,
+        "total_cost": 47414.172288208
+      },
+      {
+        "window_id": 9,
+        "train_start": "2014-12-08T00:00:00.000",
+        "train_end": "2015-12-08T00:00:00.000",
+        "model": "lgbm",
+        "MAE": 1.9526413477,
+        "BIAS%": 11.0676611501,
+        "wrmsse": 0.8901138327,
+        "cum_BIAS": 1.3201260272,
+        "cum_MAE": 5.9229647398,
+        "holding_cost": 44151.0003802767,
+        "stockout_cost": 409.298688984,
+        "total_cost": 44560.2990692607
+      }
+    ],
+    "fva": [
+      {
+        "window_id": 0,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 16.17,
+        "fva_model_vs_naive": -52.56
+      },
+      {
+        "window_id": 0,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 24.4,
+        "fva_model_vs_naive": 29.12
+      },
+      {
+        "window_id": 0,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": 5.15,
+        "fva_model_vs_naive": 12.22
+      },
+      {
+        "window_id": 1,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 17.71,
+        "fva_model_vs_naive": -49.78
+      },
+      {
+        "window_id": 1,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 23.71,
+        "fva_model_vs_naive": 30.75
+      },
+      {
+        "window_id": 1,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": 14.92,
+        "fva_model_vs_naive": 22.71
+      },
+      {
+        "window_id": 1,
+        "metric": "holding_cost",
+        "fva_moving_average_vs_naive": 12.32,
+        "fva_model_vs_naive": 11.22
+      },
+      {
+        "window_id": 1,
+        "metric": "stockout_cost",
+        "fva_moving_average_vs_naive": 6.69,
+        "fva_model_vs_naive": 10.15
+      },
+      {
+        "window_id": 1,
+        "metric": "total_cost",
+        "fva_moving_average_vs_naive": 12.13,
+        "fva_model_vs_naive": 11.18
+      },
+      {
+        "window_id": 2,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 15.3,
+        "fva_model_vs_naive": -42.09
+      },
+      {
+        "window_id": 2,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 24.36,
+        "fva_model_vs_naive": 25.92
+      },
+      {
+        "window_id": 2,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": 5.91,
+        "fva_model_vs_naive": 12.46
+      },
+      {
+        "window_id": 2,
+        "metric": "holding_cost",
+        "fva_moving_average_vs_naive": 13.77,
+        "fva_model_vs_naive": 13.25
+      },
+      {
+        "window_id": 2,
+        "metric": "stockout_cost",
+        "fva_moving_average_vs_naive": 0.11,
+        "fva_model_vs_naive": 18.8
+      },
+      {
+        "window_id": 2,
+        "metric": "total_cost",
+        "fva_moving_average_vs_naive": 13.7,
+        "fva_model_vs_naive": 13.28
+      },
+      {
+        "window_id": 3,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 12.59,
+        "fva_model_vs_naive": -42.37
+      },
+      {
+        "window_id": 3,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 25.24,
+        "fva_model_vs_naive": 25.59
+      },
+      {
+        "window_id": 3,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": -4.3,
+        "fva_model_vs_naive": 5.01
+      },
+      {
+        "window_id": 3,
+        "metric": "holding_cost",
+        "fva_moving_average_vs_naive": 14.63,
+        "fva_model_vs_naive": 14.47
+      },
+      {
+        "window_id": 3,
+        "metric": "stockout_cost",
+        "fva_moving_average_vs_naive": -27.19,
+        "fva_model_vs_naive": 13.84
+      },
+      {
+        "window_id": 3,
+        "metric": "total_cost",
+        "fva_moving_average_vs_naive": 14.42,
+        "fva_model_vs_naive": 14.47
+      },
+      {
+        "window_id": 4,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 9.0,
+        "fva_model_vs_naive": -48.2
+      },
+      {
+        "window_id": 4,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 23.79,
+        "fva_model_vs_naive": 27.35
+      },
+      {
+        "window_id": 4,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": -7.16,
+        "fva_model_vs_naive": 3.17
+      },
+      {
+        "window_id": 4,
+        "metric": "holding_cost",
+        "fva_moving_average_vs_naive": 14.08,
+        "fva_model_vs_naive": 13.96
+      },
+      {
+        "window_id": 4,
+        "metric": "stockout_cost",
+        "fva_moving_average_vs_naive": -100.17,
+        "fva_model_vs_naive": -47.33
+      },
+      {
+        "window_id": 4,
+        "metric": "total_cost",
+        "fva_moving_average_vs_naive": 13.5,
+        "fva_model_vs_naive": 13.65
+      },
+      {
+        "window_id": 5,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 8.59,
+        "fva_model_vs_naive": -47.23
+      },
+      {
+        "window_id": 5,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 18.26,
+        "fva_model_vs_naive": 26.28
+      },
+      {
+        "window_id": 5,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": -2.21,
+        "fva_model_vs_naive": 1.47
+      },
+      {
+        "window_id": 5,
+        "metric": "holding_cost",
+        "fva_moving_average_vs_naive": 15.14,
+        "fva_model_vs_naive": 13.74
+      },
+      {
+        "window_id": 5,
+        "metric": "stockout_cost",
+        "fva_moving_average_vs_naive": -102.88,
+        "fva_model_vs_naive": -1.31
+      },
+      {
+        "window_id": 5,
+        "metric": "total_cost",
+        "fva_moving_average_vs_naive": 14.69,
+        "fva_model_vs_naive": 13.68
+      },
+      {
+        "window_id": 6,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 8.54,
+        "fva_model_vs_naive": -50.53
+      },
+      {
+        "window_id": 6,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 25.13,
+        "fva_model_vs_naive": 27.82
+      },
+      {
+        "window_id": 6,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": -0.1,
+        "fva_model_vs_naive": 16.32
+      },
+      {
+        "window_id": 6,
+        "metric": "holding_cost",
+        "fva_moving_average_vs_naive": 15.1,
+        "fva_model_vs_naive": 13.19
+      },
+      {
+        "window_id": 6,
+        "metric": "stockout_cost",
+        "fva_moving_average_vs_naive": -28.64,
+        "fva_model_vs_naive": 41.25
+      },
+      {
+        "window_id": 6,
+        "metric": "total_cost",
+        "fva_moving_average_vs_naive": 14.83,
+        "fva_model_vs_naive": 13.36
+      },
+      {
+        "window_id": 7,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 16.35,
+        "fva_model_vs_naive": -47.8
+      },
+      {
+        "window_id": 7,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 27.17,
+        "fva_model_vs_naive": 32.22
+      },
+      {
+        "window_id": 7,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": 8.54,
+        "fva_model_vs_naive": 8.88
+      },
+      {
+        "window_id": 7,
+        "metric": "holding_cost",
+        "fva_moving_average_vs_naive": 15.32,
+        "fva_model_vs_naive": 14.49
+      },
+      {
+        "window_id": 7,
+        "metric": "stockout_cost",
+        "fva_moving_average_vs_naive": 30.11,
+        "fva_model_vs_naive": 52.29
+      },
+      {
+        "window_id": 7,
+        "metric": "total_cost",
+        "fva_moving_average_vs_naive": 15.47,
+        "fva_model_vs_naive": 14.88
+      },
+      {
+        "window_id": 8,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 9.16,
+        "fva_model_vs_naive": -49.68
+      },
+      {
+        "window_id": 8,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 20.52,
+        "fva_model_vs_naive": 29.79
+      },
+      {
+        "window_id": 8,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": -8.05,
+        "fva_model_vs_naive": 0.92
+      },
+      {
+        "window_id": 8,
+        "metric": "holding_cost",
+        "fva_moving_average_vs_naive": 13.3,
+        "fva_model_vs_naive": 15.36
+      },
+      {
+        "window_id": 8,
+        "metric": "stockout_cost",
+        "fva_moving_average_vs_naive": -42.06,
+        "fva_model_vs_naive": 19.43
+      },
+      {
+        "window_id": 8,
+        "metric": "total_cost",
+        "fva_moving_average_vs_naive": 13.09,
+        "fva_model_vs_naive": 15.37
+      },
+      {
+        "window_id": 9,
+        "metric": "MAE",
+        "fva_moving_average_vs_naive": 5.5,
+        "fva_model_vs_naive": -54.08
+      },
+      {
+        "window_id": 9,
+        "metric": "wrmsse",
+        "fva_moving_average_vs_naive": 16.31,
+        "fva_model_vs_naive": 25.94
+      },
+      {
+        "window_id": 9,
+        "metric": "cum_MAE",
+        "fva_moving_average_vs_naive": -15.58,
+        "fva_model_vs_naive": -9.35
+      },
+      {
+        "window_id": 9,
+        "metric": "holding_cost",
+        "fva_moving_average_vs_naive": 9.5,
+        "fva_model_vs_naive": 14.6
+      },
+      {
+        "window_id": 9,
+        "metric": "stockout_cost",
+        "fva_moving_average_vs_naive": -55.56,
+        "fva_model_vs_naive": -1.45
+      },
+      {
+        "window_id": 9,
+        "metric": "total_cost",
+        "fva_moving_average_vs_naive": 8.99,
+        "fva_model_vs_naive": 14.47
+      }
+    ],
+    "features": [
+      "item_id",
+      "dept_id",
+      "cat_id",
+      "sell_price",
+      "wday",
+      "month",
+      "year",
+      "snap_CA",
+      "day_of_week",
+      "day_of_month",
+      "week_of_year",
+      "is_event",
+      "days_to_next_event",
+      "days_since_last_event",
+      "is_event_in_7_days",
+      "is_sporting_event",
+      "is_cultural_event",
+      "is_national_event",
+      "is_religious_event",
+      "delta_price_weekn-1",
+      "price_historical_mean",
+      "price_ratio_mean",
+      "is_discounted",
+      "dept_mean_price",
+      "delta_price_rltv_dept",
+      "lag_7",
+      "lag_28",
+      "lag_60",
+      "lag_90",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "rolling_mean_60",
+      "rolling_mean_90",
+      "rolling_max_7",
+      "rolling_max_28",
+      "rolling_max_60",
+      "rolling_max_90",
+      "rolling_lag_28_win_7",
+      "rolling_lag_28_win_28",
+      "selling_trend"
+    ],
+    "duration_sec": 128.91990184783936
+  }
+]

@@ -4,7 +4,10 @@ import pandas as pd
 from typing import Dict,Any
 
 
-def split_data(df:pd.DataFrame, start_date:pd.DatetimeIndex, end_date:pd.DatetimeIndex, forecast_horizon=28)->pd.DataFrame:
+def split_data(df:pd.DataFrame, 
+               start_date:pd.Timestamp, 
+               end_date:pd.Timestamp, 
+               forecast_horizon=28)->tuple[pd.DataFrame,pd.DataFrame]:
     """
     Splits a DataFrame into training and testing windows based on dates.
     Encloses bitwise conditions in parentheses to prevent Operator Precedence TypeErrors.
