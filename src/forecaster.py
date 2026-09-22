@@ -17,44 +17,6 @@ from src.model_selector import SelectModel
 logger = logging.getLogger(__name__)
 
 
-def _infer_dynamic_feats(full_feats) -> dict:
-    """Derive which lags/rolling windows must be freshly recomputed for the newly
-    appended forecast row on every recursive step, straight from the columns
-    actually present in the training feature set -- so this can never silently
-    drift out of sync with whatever feat_builder.build() was called with.
-
-    (Replaces a hardcoded default of lags=[7] that used to live inside
-    next_day_feature_build: it left lag_28/60/90 -- and rolling_lag_28_win_*,
-    which depends on lag_28 -- as NaN for the model on every recursive step,
-    silently. See the __main__ self-test below.)
-    """
-    lag_pat = re.compile(r'^lag_(\d+)$')
-    mean_pat = re.compile(r'^rolling_mean_(\d+)$')
-    max_pat = re.compile(r'^rolling_max_(\d+)$')
-    on_lag_pat = re.compile(r'^rolling_lag_(\d+)_win_\d+$')
-
-    lags = sorted({int(m.group(1)) for c in full_feats if (m := lag_pat.match(c))})
-    rolling_mean = sorted({int(m.group(1)) for c in full_feats if (m := mean_pat.match(c))})
-    rolling_max = sorted({int(m.group(1)) for c in full_feats if (m := max_pat.match(c))})
-    rolling_on_lag = sorted({int(m.group(1)) for c in full_feats if (m := on_lag_pat.match(c))})
-
-    missing_lag_deps = set(rolling_on_lag) - set(lags)
- 
-    if missing_lag_deps:
-        raise ValueError(
-            f"rolling_on_lag needs lag_{sorted(missing_lag_deps)} recomputed on every "
-            f"recursive step, but those lags aren't in the training feature set's lag_* "
-            f"columns ({lags}). Add them to the `lags` you pass to feat_builder.build()."
-        )
-
-    return {
-        'lags': lags or None,
-        'rolling_mean': rolling_mean or None,
-        'rolling_max': rolling_max or None,
-        'rolling_on_lag': rolling_on_lag or None,
-    }
-
-
 class Forecaster():
 
     def __init__(self, model:SelectModel, feature_builder:FeatureBuilder, original_features:list[str], forecast_type:str='recursive',
