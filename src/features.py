@@ -15,7 +15,7 @@ import time
 import os 
 import numpy as np
 import pandas as pd
-from typing import Any
+from typing import Any,Set
 import time 
 
 class FeatureBuilder():
@@ -26,6 +26,7 @@ class FeatureBuilder():
         rolling_means: list[int] = [7, 28, 60, 90],
         rolling_maxs: list[int] = [7, 28, 60, 90],
         rolling_on_lags: dict[int, list[int]] = {28: [7, 28]},
+        exclude_feats: list = [],# empty default list
         col_names: dict = {
             'item_col': 'item_id', 'dept_col': 'dept_id', 'cat_col': 'cat_id',
             'store_col': 'store_id', 'state_col': 'state_id', 'price_col': 'sell_price',
@@ -40,11 +41,11 @@ class FeatureBuilder():
         # Base metadata columns that should NEVER be used as model inputs
         # any cols with direct relation with target like revenue, should also be removed
         # otherwise, code will run but with faulty predictions.
-        self.excluded_metadata = {
+        self.excluded_metadata = exclude_feats + [
             'id', 'weekday', 'date', 'sales', 'revenue','origin_date', 'target_date', 'target_sales',
             'd', 'wm_yr_wk', 'event_name_1', 'event_name_2', 'event_type_1', 'event_type_2',
             'store_id', 'state_id','snap_TX','snap_WI'
-        }
+        ]
 
         self.id_col = col_names['item_col']
         self.date_col = col_names['date_col']
