@@ -121,6 +121,7 @@ class BacktestEngine:
         lead_time_days: int = 11,
         review_period_days: int = 7,
         holding_cost_rate: float = 0.02,
+        stockout_rate : float = 1.0,
         min_history_days: int = 100,
         max_windows: int | None = None,
         use_log_transform: bool = False,
@@ -139,6 +140,7 @@ class BacktestEngine:
         self.min_history_days = min_history_days
         self.max_windows = max_windows
         self.use_log_transform = use_log_transform
+        self.stockout_rate = stockout_rate
 
         # Review period + lead time total risk horizon (tau)
         self.tau_days = self.lead_time_days + self.review_period_days
@@ -257,7 +259,7 @@ class BacktestEngine:
             eval_wnd.shape,
         )
 
-        # ---------------------------------------------------------
+
         # 2. Baseline forecasts
         # ---------------------------------------------------------
 
@@ -273,7 +275,7 @@ class BacktestEngine:
         )
 
         # ---------------------------------------------------------
-        # 3. Baseline metrics
+        # 3 Baseline metrics
         # ---------------------------------------------------------
 
         metrics_naive = get_all_metrics(
@@ -349,20 +351,19 @@ class BacktestEngine:
         # 7. Inventory evaluation
         # ---------------------------------------------------------
 
-        inventory_costs: dict[str, pd.Series] = {
-            "naive": pd.Series(),
-            "ma": pd.Series(),
-            "ml": pd.Series(),
-        }
+        # Reinitialize initial inventory for every window from training history
+        initial_inventory = (
+            train_wnd
+            .groupby("item_id", observed=True)["sales"]
+            .apply(lambda x: x.tail(28).mean())
+        ) * self.tau_days  # Cover risk period / lead time duration
 
-        inventory_results: dict[str, pd.DataFrame] = {
-            "naive": pd.DataFrame(),
-            "ma": pd.DataFrame(),
-            "ml": pd.DataFrame(),
-        }
+        inventory_costs: dict[str, pd.Series] = {}
+        inventory_results: dict[str, pd.DataFrame] = {}
 
         for short_name, current_preds in models_preds.items():
 
+            # Merge evaluation actuals with current model predictions
             forecasts_df_model = (
                 eval_wnd
                 .merge(
@@ -374,74 +375,57 @@ class BacktestEngine:
                 .copy()
             )
 
+            # Store actuals vs predictions across folds
             self.actuals_preds[short_name] = pd.concat(
                 [
-                    self.actuals_preds[short_name],
+                    self.actuals_preds.get(short_name, pd.DataFrame()),
                     forecasts_df_model,
                 ],
                 ignore_index=True,
             )
 
             # ---------------------------------------------
-            # First window: initialise inventory + OOS error
+            # Window 0: oos error calculation only (No Simulation)
             # ---------------------------------------------
-
             if window_id == 0:
-
-                initial_inventory = (
-                    eval_wnd
-                    .groupby(
-                        "item_id",
-                        observed=True,
-                    )["sales"]
-                    .mean()
-                )
-
                 error_model = compute_rolling_tau_error(
                     forecasts=forecasts_df_model,
                     tau=self.tau_days,
                 )
 
-                error_stats = calculate_error_statistics(
-                    error_model
-                )
+                error_stats = calculate_error_statistics(error_model)
 
-                self.oos_errors[short_name].append(
-                    error_stats
-                )
+                # Save error distribution statistics for future windows
+                self.oos_errors[short_name] = [error_stats]
 
-                self.inventory[short_name] = InventoryPolicy(
+            # ---------------------------------------------
+            # Window 1+: Inventory Simulation Phase
+            # ---------------------------------------------
+            else:
+                # Instantiate Inventory Policy using calibrated OOS errors & fresh initial stock
+                policy = InventoryPolicy(
                     inventory=initial_inventory,
                     forecasts=forecasts_df_model,
-                    lead_time=4,
-                    review_period=7,
-                    daily_unit_holding_cost=0.2,
-                    stockout_cost=1,
+                    lead_time=self.lead_time_days,
+                    review_period=self.review_period_days,
+                    daily_unit_holding_cost=self.holding_cost_rate,
+                    stockout_cost=self.stockout_rate,
                     oos_error_list=self.oos_errors[short_name],
                 )
+                self.inventory[short_name] = policy
 
-            # ---------------------------------------------
-            # Subsequent windows: simulate inventory
-            # ---------------------------------------------
-
-            elif self.oos_errors[short_name]:
-                policy = self.inventory[short_name]
-                if policy is not None:
-                    inventory_results[short_name] = policy.daily_simulation(
+                # Run daily simulation
+                sim_df = policy.daily_simulation(
                     actual_sales=eval_wnd,
                     forecasted_demand=current_preds,
-                ) 
-                    
-                    inventory_costs[short_name] = inventory_results[short_name][
-                        ['holding_cost','stockout_cost']].sum().copy()
-                    inventory_costs[short_name]['total_cost'] = inventory_costs[short_name].sum().sum()
+                )
+                inventory_results[short_name] = sim_df
 
+                # Calculate holding, stockout, and total costs
+                cost_summary = sim_df[['holding_cost', 'stockout_cost']].sum()
+                cost_summary['total_cost'] = cost_summary.sum()
+                inventory_costs[short_name] = cost_summary
                    
-        # if window_id> 0:
-        #     print(inventory_costs)
-        #     quit()
-
-           
         # ---------------------------------------------------------
         # 8. Assemble metric records
         # ---------------------------------------------------------
