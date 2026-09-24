@@ -46,7 +46,7 @@ def _make_model(
             tweedie_variance_power=1.2,
             n_estimators=200,
             learning_rate=0.05,
-            num_leaves=31,
+            num_leaves=15,
             subsample=0.8,
             colsample_bytree=0.8,
             random_state=42,

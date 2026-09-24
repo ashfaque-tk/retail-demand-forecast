@@ -25,7 +25,7 @@ class InventoryPolicy:
         review_period: int = 7,
         daily_unit_holding_cost: float = 0.2,
         stockout_cost: float = 1.0,
-        oos_error_list: list[pd.Series] | None = None
+        
     ):
         self.forecasts_df = forecasts.copy()
         self.forecasts_df['date'] = pd.to_datetime(self.forecasts_df['date'])
@@ -42,10 +42,10 @@ class InventoryPolicy:
         if inventory is None:
             raise ValueError("Inventory not initialized.")
 
-        if not oos_error_list:
-            raise ValueError("Out Of Sample Error not initialized.")
+        # if not oos_error_list:
+        #     raise ValueError("Out Of Sample Error not initialized.")
 
-        self.oos_errors = oos_error_list
+        self.oos_errors = [] # initialize a oos_error list
 
         # Align index type to string
         self.on_hand = inventory.copy()

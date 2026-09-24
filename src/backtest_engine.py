@@ -112,7 +112,7 @@ class BacktestEngine:
         self,
         model_name: str = "lgbm",
         forecast_type:str = 'recursive',
-        training_window_days: int = 730,
+        training_window_days: int = 365,#days 
         horizon_days: int = 28,
         backtest_mode: str = "rolling",
         step_size_days: int = 28, # continous rolling windows
@@ -125,6 +125,7 @@ class BacktestEngine:
         min_history_days: int = 100,
         max_windows: int | None = None,
         use_log_transform: bool = False,
+        baselines : list[str] = ['Naive','Moving_Average']
     ) -> None:
         self.model_name = model_name
         self.forecast_type = forecast_type.lower()
@@ -141,7 +142,7 @@ class BacktestEngine:
         self.max_windows = max_windows
         self.use_log_transform = use_log_transform
         self.stockout_rate = stockout_rate
-
+        self.baselines = baselines
         # Review period + lead time total risk horizon (tau)
         self.tau_days = self.lead_time_days + self.review_period_days
 
@@ -209,106 +210,28 @@ class BacktestEngine:
 
         return windows
 
-    def run_window(
-        self,
-        window_id: int,
-        window_spec: dict[str, Any],
-        full_data: pd.DataFrame,
-        feature_names: list[str] | None = None,
-    ) -> WindowResult:
 
-        feats = feature_names or self.feature_names
-
-        train_start = pd.Timestamp(window_spec["train_start"])
-        train_end = pd.Timestamp(window_spec["train_end"])
-        eval_start = pd.Timestamp(window_spec["test_start"])
-        eval_end = pd.Timestamp(window_spec["test_end"])
-
-        logger.info(
-            "--- Window %d: Train [%s -> %s] | Eval [%s -> %s] ---",
-            window_id,
-            train_start.date(),
-            train_end.date(),
-            eval_start.date(),
-            eval_end.date(),
-        )
+    def get_forecasts(
+            self,
+            window_id:int,
+            train_df:pd.DataFrame,
+            eval_df: pd.DataFrame,
+        )->tuple[dict[str,pd.DataFrame],dict[str,dict[str,Any]]]:
+        '''return forecasted values and corresponding metrics for given train and eval dfs'''
+        
+        logger.info(f'calculating forecasts and metrics for the models')
 
         # ---------------------------------------------------------
-        # 1. Prepare window data
-        # ---------------------------------------------------------
-
-        window_slice = full_data[
-            full_data["date"].between(train_start, eval_end)
-        ]
-
-        active_items_df = self.feature_builder.add_price_features(
-            window_slice
-        )
-
-        train_wnd, eval_wnd = split_data(
-            df=active_items_df,
-            start_date=train_start,
-            end_date=train_end,
-            forecast_horizon=self.horizon_days,
-        )
-
-        logger.debug(
-            "Window %d: train=%s, eval=%s",
-            window_id,
-            train_wnd.shape,
-            eval_wnd.shape,
-        )
-
-
-        # 2. Baseline forecasts
-        # ---------------------------------------------------------
-
-        baseline_naive = seasonal_naive(
-            train_wnd,
-            eval_wnd,
-        )
-
-        baseline_ma = simple_moving_average(
-            train_wnd,
-            eval_wnd,
-            window_days=180,
-        )
-
-        # ---------------------------------------------------------
-        # 3 Baseline metrics
-        # ---------------------------------------------------------
-
-        metrics_naive = get_all_metrics(
-            train_wnd,
-            eval_wnd,
-            baseline_naive,
-            risk_period=self.tau_days
-        )
-
-        metrics_ma = get_all_metrics(
-            train_wnd,
-            eval_wnd,
-            baseline_ma,
-            risk_period=self.tau_days
-        )
-
-        # ---------------------------------------------------------
-        # 4. Build ML features
+        # 1. Build ML features
         # ---------------------------------------------------------
 
         train_wnd, _ = self.feature_builder.build(
-            df=train_wnd,
-            lags=[7, 28, 60, 90],
-            rolling_maxs=[7, 28, 60, 90],
-            rolling_means=[7, 28, 60, 90],
-            rolling_on_lags={
-                28: [7, 28]
-            },
+            df=train_df,  # features are already given in feature_builder
         )
 
         missing_features = [
             col
-            for col in feats + ["date", "sales"]
+            for col in self.feature_names + ["date", "sales"]
             if col not in train_wnd.columns
         ]
 
@@ -319,33 +242,124 @@ class BacktestEngine:
             )
 
         # ---------------------------------------------------------
-        # 5. ML forecast
+        #  ML forecast
         # ---------------------------------------------------------
-        # # debugg for one item
-        # train_wnd = train_wnd[train_wnd['item_id']==item]
-        # eval_wnd = eval_wnd[eval_wnd['item_id']==item]
-
         forecasted_demands = self.forecaster.forecast(
             train_df=train_wnd,
-            test_df=eval_wnd,
+            test_df=eval_df,
         )
 
         metrics_ml = get_all_metrics(
             train_wnd,
-            eval_wnd,
+            eval_df,
             forecasted_demands,
             risk_period=self.tau_days
         )
 
-        # ---------------------------------------------------------
-        # 6. Collect predictions
-        # ---------------------------------------------------------
+        # ----------------------------------------------------------
+        # Baseline forecast and predictions 
+        # ----------------------------------------------------------
+        base_preds, base_metrics = self._baselines_metrics(
+            train_df=train_df,
+            eval_df= eval_df)
 
-        models_preds = {
-            "ml": forecasted_demands,
-            "ma": baseline_ma,
-            "naive": baseline_naive,
+        # -----------------------------------------------------------
+        # collecting the forecasts and metrics 
+        # -----------------------------------------------------------
+        models_preds:dict[str,pd.DataFrame] = {
+            'ml' : forecasted_demands,
+            **base_preds
         }
+
+        models_metrics:dict[str,dict[str,Any]] = {
+            'ml' : metrics_ml,
+            **base_metrics
+        }
+
+    
+        return models_preds, models_metrics
+
+    def __populate_actual_vs_preds(self,
+                                models_preds:dict[str,pd.DataFrame],
+                                actual_df:pd.DataFrame):
+        ''' populate actual_preds dictionary with values'''
+
+        for short_name, cal_preds in models_preds.items():
+                # Merge evaluation actuals with current model predictions
+                forecasts_df_model = (
+                                actual_df
+                                .merge(
+                                    cal_preds,
+                                    on=["item_id", "date"],
+                                    how="inner",
+                                )
+                                .sort_values(["item_id", "date"])
+                                .copy()
+                            )
+
+                # Store actuals vs predictions across folds
+                self.actuals_preds[short_name] = pd.concat(
+                    [
+                        self.actuals_preds.get(short_name, pd.DataFrame()),
+                        forecasts_df_model,
+                    ],
+                    ignore_index=True,
+                )
+            
+
+    def run_window(
+            self,
+            window_id:int,
+            train_wnd:pd.DataFrame,
+            eval_wnd: pd.DataFrame, # hold out set in case of final testing
+            train_start:pd.Timestamp,
+            train_end: pd.Timestamp,
+            eval_start:pd.Timestamp,
+            eval_end : pd.Timestamp
+    )-> WindowResult:
+        ''' return metrics, inventory , forecasts for a current window,
+        a calibration set is used for window 0 to return the forecasts needed for inventory calculations'''
+
+        #  debug line
+        logger.debug(
+            "Window %d: train=%s, eval=%s",
+            window_id,
+            train_wnd.shape,
+            eval_wnd.shape,
+        )
+        if 'dept_mean_price' not in train_wnd.columns:
+            logging.error(f'Missing price cols. First calculate price features on both '
+                          'train and eval set')    
+            quit()
+        # if window 0: we need forecast for a prior horizon for rmse_error in inventory calculations
+        # we split the train_wnd to calibration_train, calibration_eval
+        if window_id == 0:
+            logger.debug(f'using calibration set for window_id=0')
+            # build the price feature set on full train data 
+            calibration_set = train_wnd.copy()
+            # calibration_price = self.feature_builder.add_price_features(calibration_set)#added price
+            # split into train and eval
+            cal_train_start = calibration_set['date'].min()
+            cal_train_end = calibration_set['date'].max()-pd.Timedelta(days=self.horizon_days)
+
+            cal_train,cal_eval = split_data(df=calibration_set,
+                                            start_date=cal_train_start,
+                                            end_date=cal_train_end,
+                                            forecast_horizon=self.horizon_days)
+
+            #  return the forecasts
+            cal_model_preds, _ = self.get_forecasts(window_id= window_id,
+                                                    train_df=cal_train,
+                                                    eval_df=cal_eval)
+
+            self.__populate_actual_vs_preds(models_preds=cal_model_preds,actual_df=cal_eval)
+
+
+        model_preds, model_metrics = self.get_forecasts(window_id=window_id,
+                                                        train_df=train_wnd,
+                                                        eval_df=eval_wnd)
+        
+        self.__populate_actual_vs_preds(models_preds=model_preds,actual_df=eval_wnd)
 
         # ---------------------------------------------------------
         # 7. Inventory evaluation
@@ -356,91 +370,46 @@ class BacktestEngine:
             train_wnd
             .groupby("item_id", observed=True)["sales"]
             .apply(lambda x: x.tail(28).mean())
-        ) * self.tau_days  # Cover risk period / lead time duration
+        ) *self.tau_days  # Cover risk period / lead time duration
 
         inventory_costs: dict[str, pd.Series] = {}
         inventory_results: dict[str, pd.DataFrame] = {}
 
-        for short_name, current_preds in models_preds.items():
-
-            # Merge evaluation actuals with current model predictions
-            forecasts_df_model = (
-                eval_wnd
-                .merge(
-                    current_preds,
-                    on=["item_id", "date"],
-                    how="inner",
-                )
-                .sort_values(["item_id", "date"])
-                .copy()
+        for short_name, current_forecasts in model_preds.items():
+            forecasts_model = self.actuals_preds[short_name]
+            # Instantiate Inventory Policy using calibrated OOS errors & fresh initial stock
+            policy = InventoryPolicy(
+                inventory=initial_inventory,
+                forecasts=forecasts_model,
+                lead_time=self.lead_time_days,
+                review_period=self.review_period_days,
+                daily_unit_holding_cost=self.holding_cost_rate,
+                stockout_cost=self.stockout_rate,
             )
 
-            # Store actuals vs predictions across folds
-            self.actuals_preds[short_name] = pd.concat(
-                [
-                    self.actuals_preds.get(short_name, pd.DataFrame()),
-                    forecasts_df_model,
-                ],
-                ignore_index=True,
+            self.inventory[short_name] = policy
+
+            # Run daily simulation
+            sim_df = policy.daily_simulation(
+                actual_sales=eval_wnd,
+                forecasted_demand=current_forecasts,
             )
+            inventory_results[short_name] = sim_df
 
-            # ---------------------------------------------
-            # Window 0: oos error calculation only (No Simulation)
-            # ---------------------------------------------
-            if window_id == 0:
-                error_model = compute_rolling_tau_error(
-                    forecasts=forecasts_df_model,
-                    tau=self.tau_days,
-                )
-
-                error_stats = calculate_error_statistics(error_model)
-
-                # Save error distribution statistics for future windows
-                self.oos_errors[short_name] = [error_stats]
-
-            # ---------------------------------------------
-            # Window 1+: Inventory Simulation Phase
-            # ---------------------------------------------
-            else:
-                # Instantiate Inventory Policy using calibrated OOS errors & fresh initial stock
-                policy = InventoryPolicy(
-                    inventory=initial_inventory,
-                    forecasts=forecasts_df_model,
-                    lead_time=self.lead_time_days,
-                    review_period=self.review_period_days,
-                    daily_unit_holding_cost=self.holding_cost_rate,
-                    stockout_cost=self.stockout_rate,
-                    oos_error_list=self.oos_errors[short_name],
-                )
-                self.inventory[short_name] = policy
-
-                # Run daily simulation
-                sim_df = policy.daily_simulation(
-                    actual_sales=eval_wnd,
-                    forecasted_demand=current_preds,
-                )
-                inventory_results[short_name] = sim_df
-
-                # Calculate holding, stockout, and total costs
-                cost_summary = sim_df[['holding_cost', 'stockout_cost']].sum()
-                cost_summary['total_cost'] = cost_summary.sum()
-                inventory_costs[short_name] = cost_summary
+            # Calculate holding, stockout, and total costs
+            cost_summary = sim_df[['holding_cost', 'stockout_cost']].sum()
+            cost_summary['total_cost'] = cost_summary.sum()
+            inventory_costs[short_name] = cost_summary
                    
         # ---------------------------------------------------------
         # 8. Assemble metric records
         # ---------------------------------------------------------
 
-        model_metrics_map = {
-            "naive": metrics_naive,
-            "ma": metrics_ma,
-            "ml": metrics_ml,
-        }
-
         metric_rows = self._build_metric_rows(
             window_id=window_id,
             train_start=train_start,
             train_end=train_end,
-            model_metrics_map=model_metrics_map,
+            model_metrics_map=model_metrics,
             inventory_costs=inventory_costs,
         )
 
@@ -451,6 +420,7 @@ class BacktestEngine:
         fva_rows = self._calculate_fva(
             metric_rows
         )
+
 
         # ---------------------------------------------------------
         # 10. Return complete window result
@@ -464,7 +434,7 @@ class BacktestEngine:
             eval_end=eval_end,
             metric_rows=metric_rows,
             fva_rows=fva_rows,
-            model_predictions=models_preds,
+            model_predictions=model_preds,
             eval_actuals=eval_wnd,
             inventory_policy=inventory_results,
         )
@@ -472,7 +442,7 @@ class BacktestEngine:
         self.last_window_result = result
 
         return result
-    
+
     def _calculate_fva(self,
                         metric_rows: list[dict],
                     ) -> list[dict]:
@@ -544,8 +514,8 @@ class BacktestEngine:
                         ) -> list[dict]:
 
         name_to_label = {
-            "naive": "seasonal_naive",
-            "ma": "moving_average",
+            "Naive": "seasonal_naive",
+            "Moving_Average": "moving_average",
             "ml": self.model_name,
         }
 
@@ -564,7 +534,7 @@ class BacktestEngine:
                 "cum_BIAS" : metrics['cum_BIAS'],
                 "cum_MAE"  : metrics['cum_MAE']
             }
-
+        
             row.update(inventory_costs.get(short_name, {}))
             rows.append(row)
 
@@ -602,15 +572,60 @@ class BacktestEngine:
 
         for window_id, wnd_spec in enumerate(windows):
             try:
+                train_start = pd.Timestamp(wnd_spec["train_start"])
+                train_end = pd.Timestamp(wnd_spec["train_end"])
+                eval_start = pd.Timestamp(wnd_spec["test_start"])
+                eval_end = pd.Timestamp(wnd_spec["test_end"])
+        
+                logger.info(
+                    "--- Window %d: Train [%s -> %s] | Eval [%s -> %s] ---",
+                    window_id,
+                    train_start.date(),
+                    train_end.date(),
+                    eval_start.date(),
+                    eval_end.date(),
+                )
+        
+                # ---------------------------------------------------------
+                # 1. Prepare window data
+                # ---------------------------------------------------------
+        
+                window_slice = full_data[
+                    full_data["date"].between(train_start, eval_end)
+                ]
+        
+                window_slice_price = self.feature_builder.add_price_features(
+                    window_slice
+                )# added price on whole slice
+        
+                train_wnd, eval_wnd = split_data(
+                    df=window_slice_price,
+                    start_date=train_start,
+                    end_date=train_end,
+                    forecast_horizon=self.horizon_days,
+                )
+        
+                logger.debug(
+                    "Window %d: train=%s, eval=%s",
+                    window_id,
+                    train_wnd.shape,
+                    eval_wnd.shape,
+                )
+            
                 res = self.run_window(
                     window_id=window_id,
-                    window_spec=wnd_spec,
-                    full_data=full_data,
-                    feature_names=feats,
+                    train_wnd=train_wnd,
+                    eval_wnd = eval_wnd,
+                    train_start= train_start,
+                    train_end = train_end,
+                    eval_start= eval_start,
+                    eval_end= eval_end
+                
                 )
                 all_metric_rows.extend(res.metric_rows)
                 all_fva_rows.extend(res.fva_rows)
                 window_results.append(res)
+
             except Exception as exc:
                 logger.error("Window %d failed: %s", window_id, exc, exc_info=True)
                 raise exc
@@ -623,104 +638,114 @@ class BacktestEngine:
 
         return metrics_df, fva_df, window_results
 
-    def run_deploy(
-        self,
-        historical_data: pd.DataFrame,
-        future_static_data: pd.DataFrame,
-        calibration_days: int | None = None,
-    ) -> DeploymentResult:
-        """Fit a final model on all historical data and generate production demand forecasts.
+    def run_holdout_test(
+            self,
+            full_data :pd.DataFrame,#fulldataframe
+            test_holdout:pd.DataFrame,
+            training_year:int = 1, #1 year of training data
+            ):
 
-        Holds out the final `calibration_days` of historical data once to estimate
-        the tau-day forecast-error distribution and safety-stock parameters.
-        The model is then refit on all available historical data before forecasting
-        `future_static_data`.
-        """
-        calibration_days = calibration_days or self.horizon_days
-        if calibration_days < self.tau_days:
-            raise ValueError(
-                f"calibration_days ({calibration_days}) must be at least tau_days ({self.tau_days})."
-            )
-        if historical_data.empty or future_static_data.empty:
-            raise ValueError("historical_data and future_static_data must both be non-empty.")
+        '''take the full train data split to the given year, and test on holdout set
+        test_holdout: explicitly require the holdout set '''
 
-        # 1. Clean and sort historical and future date indexes
-        history = historical_data.copy()
-        future = future_static_data.copy()
-        history["date"] = pd.to_datetime(history["date"])
-        future["date"] = pd.to_datetime(future["date"])
-        history = history.sort_values(["item_id", "date"])
-        future = future.sort_values(["item_id", "date"])
+        logger.info("Final Holdout Test: Model: '%s' | Type: ' %s'| Training-Period: '%d'",
+                    self.model_name,self.forecast_type,training_year)
 
-        history_dates = pd.Index(history["date"].drop_duplicates().sort_values())
-        forecast_dates = pd.Index(future["date"].drop_duplicates().sort_values())
-
-        if len(history_dates) < calibration_days + 1:
-            raise ValueError("Not enough historical dates for a train/calibration split.")
-        if forecast_dates[0] != pd.to_datetime(history_dates[-1])+ pd.Timedelta(days=1):
-            raise ValueError(
-                "future_static_data must begin on the exact day after the last historical date."
-            )
-
-        # 2. Build contiguous price features before splitting windows
-        combined_data = pd.concat([history, future], ignore_index=True).sort_values(["item_id", "date"])
-        price_data = self.feature_builder.add_price_features(combined_data)
-
-        # 3. Define date bounds for Calibration and Production passes
-        calibration_dates = history_dates[-calibration_days:]
-        calibration_start = pd.Timestamp(calibration_dates[0])
-        calibration_end = pd.Timestamp(calibration_dates[-1])
-
-        calibration_train = price_data[price_data["date"] < calibration_start].copy()
-        calibration_eval = price_data[price_data["date"].isin(calibration_dates)].copy()
-        final_train = price_data[price_data["date"].isin(history_dates)].copy()
-        final_forecast = price_data[price_data["date"].isin(forecast_dates)].copy()
-
-        def _build_features(raw_train: pd.DataFrame) -> pd.DataFrame:
-            frame, _ = self.feature_builder.build(
-                df=raw_train,
-                lags=[7, 28, 60, 90],
-                rolling_means=[7, 28, 60, 90],
-                rolling_maxs=[7, 28, 60, 90],
-                rolling_on_lags={28: [7, 28]},
-            )
-            missing = [col for col in self.feature_names + ["sales"] if col not in frame.columns]
-            if missing:
-                raise ValueError(f"Deployment training frame missing expected features: {missing}")
-            return frame
-
-        # 4. Calibration Phase: Estimate out-of-sample forecast errors
-        calib_train_feats = _build_features(calibration_train)
-        calib_predictions = self.forecaster.forecast(train_df=calib_train_feats, test_df=calibration_eval)
-        calib_metrics = get_all_metrics(calib_train_feats, calibration_eval, calib_predictions,
-                                        risk_period = self.tau_days)
-
-        merged_calib = (
-            calibration_eval.merge(calib_predictions, on=["item_id", "date"], how="inner")
-            .sort_values(["item_id", "date"])
-            .copy()
-        )
-        calib_error_df = compute_rolling_tau_error(forecasts=merged_calib, tau=self.tau_days)
-        error_stats = calculate_error_statistics(calib_error_df)
-
-        # 5. Production Phase: Re-train on 100% of historical data and forecast future horizon
-        final_train_feats = _build_features(final_train)
-        production_predictions = self.forecaster.forecast(
-            train_df=final_train_feats, test_df=final_forecast
+        train_window  = training_year*365 # to days
+        window_id  = 0
+  
+        training_full = full_data[
+            full_data['date']>=(full_data['date'].max()-pd.Timedelta(
+                days=train_window)
+                )]
+        print('cutoff date',full_data['date'].max()-pd.Timedelta(days=train_window))
+        print('dates before and after spliting')
+        print(full_data['date'].min(),full_data['date'].max())
+        print(f'after: training_full, min date',training_full['date'].min())
+        
+        logger.debug(
+            "Window %d: train=%s, test=%s",
+            window_id,
+            training_full.shape,
+            test_holdout.shape,
         )
 
-        # 6. Construct DeploymentResult output
-        return DeploymentResult(
-            forecasts=production_predictions,
-            inventory_policy=pd.DataFrame(),  # Optional: Place simulated inventory policy frame here if needed
-            inventory_cost_summary=error_stats,
-            calibration_metrics=calib_metrics,
-            model_name=self.model_name,
-            run_timestamp=pd.Timestamp.now(),
-            forecast_start=pd.Timestamp(forecast_dates[0]),
-            forecast_end=pd.Timestamp(forecast_dates[-1]),
+        train_start=training_full['date'].min()
+        train_end = training_full['date'].max()
+
+        test_start = test_holdout['date'].min()
+        test_end = test_holdout['date'].max()
+        
+        
+        logger.info(
+                    "--- Holdout Test: Train [%s -> %s] | Eval [%s -> %s] ---",
+                    train_start.date(),
+                    train_end.date(),
+                    test_start.date(),
+                    test_end.date(),
+                )
+
+        ######## merge train and test for adding price features #######
+        merged_ = pd.concat((training_full,test_holdout),axis=0)
+        assert merged_['date'].max()==test_end,'AssersionError: Merging faulty'
+
+        ### price features 
+        merged_price = self.feature_builder.add_price_features(merged_)
+
+        #now split again
+
+        train_price,test_price = split_data(
+            df=merged_price,
+            start_date=train_start,
+            end_date=train_end,
+            forecast_horizon=self.horizon_days)
+
+        res = self.run_window(
+            window_id=window_id,
+            train_wnd= train_price,
+            eval_wnd = test_price,
+            train_start= train_start,
+            train_end = train_end,
+            eval_start= test_start,
+            eval_end= test_end
+        
         )
 
+        model_preds = res.model_predictions
+        model_inventory = res.inventory_policy
+
+        
+
+        return model_preds,model_inventory,res.metric_rows, res.fva_rows
+        
+
+
+    def _baselines_metrics(
+            self,
+            train_df:pd.DataFrame,
+            eval_df:pd.DataFrame) : # should return baseline preds and metrics
+
+        baselines = self.baselines   # provide a list of default baselines 
+        baseline_preds = {}
+        baseline_metrics = {}
+
+        for b_name in baselines:
+            if b_name == "Naive":
+                preds = seasonal_naive(train_df, eval_df)
+            elif b_name == "Moving_Average":
+                preds = simple_moving_average(train_df, eval_df, window_days=180)
+            else:
+                logger.warning(f"Unknown baseline: {b_name}. Skipping.")
+                continue
+
+            baseline_preds[b_name] = preds
+
+            # 1. Accuracy metrics
+            baseline_metrics[b_name] = get_all_metrics(
+                train_df, eval_df, preds, risk_period=self.tau_days
+            )
+        return baseline_preds, baseline_metrics
+    
     def get_last_predictions(self) -> dict[str, Any] | None:
         """Returns the actuals and model predictions from the most recently executed window."""
         if self.last_window_result is None:

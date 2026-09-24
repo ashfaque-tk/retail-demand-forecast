@@ -1,0 +1,211 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>[TEST] Result: LGBM Recursive (1-Year Training)</title>
+    <style>
+        :root {
+            --primary: #1e293b;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --border: #e2e8f0;
+            --text-main: #334155;
+            --text-muted: #64748b;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            margin: 0;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+            padding: 36px;
+        }
+        .header-title { font-size: 1.6rem; font-weight: 700; color: var(--primary); margin: 0 0 6px 0; }
+        .meta-subtitle { font-size: 0.88rem; color: var(--text-muted); margin-bottom: 24px; line-height: 1.5; }
+        .meta-tag {
+            display: inline-block;
+            background: #e2e8f0;
+            color: #334155;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            margin-right: 6px;
+        }
+        
+        /* Two-column layout hero banner */
+        .hero-banner {
+            background-color: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 28px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .hero-column { display: flex; flex-direction: column; }
+        .hero-column:first-child { border-right: 1px solid #cbd5e1; padding-right: 20px; }
+        .hero-banner .headline { font-weight: 700; color: #166534; font-size: 1.1rem; margin-bottom: 4px; }
+        .hero-banner .subhead { font-weight: 600; color: #15803d; font-size: 0.82rem; margin-top: 10px; text-transform: uppercase; letter-spacing: 0.5px;}
+        .hero-banner .metric-val { font-size: 1.3rem; font-weight: 700; color: #15803d; margin: 4px 0 2px 0; }
+        .hero-banner ul { margin: 6px 0 0 18px; padding: 0; font-size: 0.88rem; color: #15803d; }
+        .hero-banner li { margin-bottom: 6px; }
+        
+        .section-title {
+            font-size: 1.1rem; font-weight: 600; color: var(--primary);
+            margin: 28px 0 12px 0; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+        }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.92rem; }
+        th, td { padding: 10px 14px; text-align: right; border-bottom: 1px solid var(--border); }
+        th { background-color: #f8fafc; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+        td:first-child, th:first-child { text-align: left; }
+        tr:hover { background-color: #f1f5f9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="header-title">[TEST] Result: LGBM Recursive (1-Year Training)</h1>
+        <div class="meta-subtitle">
+            Generated: 2026-09-24 23:50:51 | Mode: <strong>TEST</strong> (1 Window/Split)<br/>
+            <span class="meta-tag">Lead Time: 4d</span>
+            <span class="meta-tag">Review Period: 7d</span>
+            <span class="meta-tag">Safety Stock Policy: RMSE (Norm Sim)</span>
+        </div>
+
+        <div class="hero-banner">
+            <!-- Left Column: Key Accuracy Metrics -->
+            <div class="hero-column">
+                <div class="headline">Winning Model: SEASONAL_NAIVE</div>
+                <div class="subhead">Accuracy Profile (Avg Across 1 Window/Split)</div>
+                <ul>
+                    <li><strong>cum_MAE:</strong> 6.3956</li>
+                    <li><strong>cum_BIAS:</strong> -0.9444</li>
+                    <li><strong>MAE:</strong> 1.3033</li>
+                    <li><strong>BIAS%:</strong> -7.34%</li>
+                </ul>
+            </div>
+
+            <!-- Right Column: Business Impact & Costs -->
+            <div class="hero-column">
+                <div class="subhead">Business Impact</div>
+                <div class="metric-val">$4,364.93</div>
+                <div style="font-size: 0.78rem; color: #64748b;">Avg total cost across 1 window/split</div>
+
+                <div class="subhead">Cost Savings vs Other Models</div>
+                <ul>
+                
+                    <li><strong>$81.78</strong> vs Lgbm (1.84% FVA)</li>
+                
+                    <li><strong>$79.95</strong> vs Moving Average (1.80% FVA)</li>
+                
+                </ul>
+            </div>
+        </div>
+
+        <div class="section-title">Mean Metrics Across 1 Window/Split</div>
+        <table class="dataframe table">
+  <thead>
+    <tr style="text-align: right;">
+      <th>model</th>
+      <th>MAE</th>
+      <th>BIAS%</th>
+      <th>wrmsse</th>
+      <th>cum_BIAS</th>
+      <th>cum_MAE</th>
+      <th>holding_cost</th>
+      <th>stockout_cost</th>
+      <th>total_cost</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>lgbm</td>
+      <td>2.1153</td>
+      <td>11.54%</td>
+      <td>0.8167</td>
+      <td>1.4849</td>
+      <td>6.1717</td>
+      <td>$4,204.37</td>
+      <td>$242.34</td>
+      <td>$4,446.71</td>
+    </tr>
+    <tr>
+      <td>moving_average</td>
+      <td>1.1700</td>
+      <td>0.01%</td>
+      <td>0.9378</td>
+      <td>0.0012</td>
+      <td>5.8985</td>
+      <td>$4,319.82</td>
+      <td>$125.06</td>
+      <td>$4,444.88</td>
+    </tr>
+    <tr>
+      <td>seasonal_naive</td>
+      <td>1.3033</td>
+      <td>-7.34%</td>
+      <td>1.2364</td>
+      <td>-0.9444</td>
+      <td>6.3956</td>
+      <td>$3,944.87</td>
+      <td>$420.06</td>
+      <td>$4,364.93</td>
+    </tr>
+  </tbody>
+</table>
+
+        <div class="section-title">Mean Forecast Value Added (FVA %) Across 1 Window/Split</div>
+        <table class="dataframe table">
+  <thead>
+    <tr style="text-align: right;">
+      <th>metric</th>
+      <th>fva_moving_average_vs_naive</th>
+      <th>fva_model_vs_naive</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>MAE</td>
+      <td>10.23</td>
+      <td>-62.30</td>
+    </tr>
+    <tr>
+      <td>cum_MAE</td>
+      <td>7.77</td>
+      <td>3.50</td>
+    </tr>
+    <tr>
+      <td>holding_cost</td>
+      <td>-9.50</td>
+      <td>-6.58</td>
+    </tr>
+    <tr>
+      <td>stockout_cost</td>
+      <td>70.23</td>
+      <td>42.31</td>
+    </tr>
+    <tr>
+      <td>total_cost</td>
+      <td>-1.83</td>
+      <td>-1.87</td>
+    </tr>
+    <tr>
+      <td>wrmsse</td>
+      <td>24.15</td>
+      <td>33.95</td>
+    </tr>
+  </tbody>
+</table>
+    </div>
+</body>
+</html>

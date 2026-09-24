@@ -11,18 +11,18 @@ TEST_DATA_PATH = DATA_DIR / "processed/test_filtered_ca1.parquet"
 
 PIPELINE_CONFIG = {
     # Run mode
-    "mode": "experiment",  # "experiment", "deploy", "auto"
+    "mode": "backtest",  # "backtest", "deploy", "auto"
     
     # Backtest Setup
     "backtest_mode": "rolling",
-    "training_window": 730,
+    "training_window": 365,
     "horizon_days": 28,
     "step_size": 28,
     "max_windows": 10,  # last 8 windows, chronological
 
     # Model
-    "model": "lgbm",
-    "forecast_type": "direct",  # "direct" or "recursive"
+    "model": "",
+    "forecast_type": "",  # "direct" or "recursive"
     "use_log_transform": False, # for scaling 
     "categorical_cols": ["item_id", "cat_id", "dept_id"],
 
