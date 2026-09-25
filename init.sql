@@ -22,22 +22,35 @@ CREATE TABLE IF NOT EXISTS actuals (
     PRIMARY KEY (item_id, store_id, date)
 );
 
-CREATE TABLE IF NOT EXISTS inventory_policies (
+
+CREATE TABLE IF NOT EXISTS inventory (
     id BIGSERIAL PRIMARY KEY,
+
+    date DATE NOT NULL,
     item_id VARCHAR(50) NOT NULL,
     store_id VARCHAR(10) NOT NULL,
-    calculated_date DATE NOT NULL,
-    policy_type VARCHAR(30) NOT NULL,          -- e.g., 'PARAMETRIC_RMSE', 'QUANTILE_LOSS'
-    lead_time_days INT NOT NULL DEFAULT 4,
-    review_period_days INT NOT NULL DEFAULT 7,
-    holding_cost_per_unit NUMERIC(10, 4) NOT NULL DEFAULT 0.00,
-    forecasted_risk_period NUMERIC(12, 4) NOT NULL, -- Summed demand forecast over (L + R)
-    safety_stock NUMERIC(12, 4) NOT NULL,
-    reorder_point NUMERIC(12, 4) NOT NULL DEFAULT 0.00,
-    order_up_to NUMERIC(12, 4) NOT NULL,
-    holding_cost_risk_period NUMERIC(12,4) NOT NULL,
+
+    model_name VARCHAR(50) NOT NULL,
+    forecast_type VARCHAR(30) NOT NULL,
+
+    -- Inventory state
+    on_hand NUMERIC(12,4) NOT NULL DEFAULT 0.00,
+    arriving_qty NUMERIC(12,4) NOT NULL DEFAULT 0.00,
+
+    -- Inventory decision
+    order_qty NUMERIC(12,4) NOT NULL DEFAULT 0.00,
+    order_up_to NUMERIC(12,4) NOT NULL DEFAULT 0.00,
+    safety_stock NUMERIC(12,4) NOT NULL DEFAULT 0.00,
+    -- Realized outcomes
+    holding_cost NUMERIC(12,4) NOT NULL DEFAULT 0.00,
+
+    -- Policy inputs
+    lead_time_days INT NOT NULL,
+    review_period_days INT NOT NULL,
+
+ 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    -- Ensure only one policy entry per item/store/date/type combination
-    CONSTRAINT uq_inventory_policy UNIQUE (item_id, store_id, calculated_date, policy_type)
+
+    CONSTRAINT uq_inventory_record
+        UNIQUE (item_id, store_id, date, model)
 );

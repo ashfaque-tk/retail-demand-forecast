@@ -107,7 +107,13 @@ class InventoryPolicy:
 
         return on_hand, lost_sales, holding_cost, stockout_cost
 
-    def daily_simulation(self, actual_sales: pd.DataFrame, forecasted_demand: pd.DataFrame) -> pd.DataFrame:
+    def daily_simulation(
+            self, 
+            actual_sales: pd.DataFrame, 
+            forecasted_demand: pd.DataFrame,
+            model_name:str,
+            forecast_type:str,
+            store_id:str='CA_1') -> pd.DataFrame:
         actual_sales = actual_sales.copy()
         forecasted_demand = forecasted_demand.copy()
         
@@ -174,9 +180,13 @@ class InventoryPolicy:
             daily_logs = pd.DataFrame({
                 'date': day,
                 'item_id': self.on_hand.index,
+                'store_id' : store_id,
+                'model_name' : model_name,
+                'forecast_type': forecast_type,
                 'on_hand': self.on_hand.values,
                 'arriving_qty': arriving_qty.reindex(self.on_hand.index, fill_value=0.0).values,
                 'actual_sales': sales_on_day.values,
+                'safety_stock': self._safety_stock(),
                 'lost_sales': lost_sales.values,
                 'order_qty': order_qty.reindex(self.on_hand.index, fill_value=0.0).values,
                 'order_up_to': order_up_to.reindex(self.on_hand.index, fill_value=0.0).values,

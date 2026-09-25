@@ -147,16 +147,17 @@ class BacktestEngine:
         self.tau_days = self.lead_time_days + self.review_period_days
 
         # Encapsulated stateful error buffers (replaces mutable module globals)
+        
         self.oos_errors: dict[str, list[pd.Series]] = {
-            "ml": [],
-            "ma": [],
-            "naive": [],
+            self.model_name: [],
+            "Naive": [],
+            "Moving_Average": [],
         }
         # inventory holder
         self.inventory: dict[str, Optional[InventoryPolicy]] = {
-            "naive": None,
-            "ma": None,
-            "ml": None,
+            "Naive": None,
+            "Moving_Average": None,
+            self.model_name: None,
         }
         ### initlize a similar one for  storing actuals and preds
         self.actuals_preds :dict[str,pd.DataFrame] = {'ml':pd.DataFrame(),
@@ -182,7 +183,7 @@ class BacktestEngine:
         
     def reset_state(self) -> None:
         """Clears accumulated out-of-sample errors and cached window results."""
-        self.oos_errors = {"ml": [], "ma": [], "naive": []}
+        self.oos_errors = {"ml": [], "Moving_Average": [], "Naive": []}
         self.last_window_result = None
 
     def generate_windows(self, full_data: pd.DataFrame) -> list[dict[str, Any]]:
@@ -267,12 +268,12 @@ class BacktestEngine:
         # collecting the forecasts and metrics 
         # -----------------------------------------------------------
         models_preds:dict[str,pd.DataFrame] = {
-            'ml' : forecasted_demands,
+            self.model_name : forecasted_demands,
             **base_preds
         }
 
         models_metrics:dict[str,dict[str,Any]] = {
-            'ml' : metrics_ml,
+            self.model_name : metrics_ml, #model name 
             **base_metrics
         }
 
@@ -393,6 +394,9 @@ class BacktestEngine:
             sim_df = policy.daily_simulation(
                 actual_sales=eval_wnd,
                 forecasted_demand=current_forecasts,
+                model_name=self.model_name,
+                forecast_type=self.forecast_type,
+                store_id= 'CA_1'
             )
             inventory_results[short_name] = sim_df
 
@@ -475,12 +479,12 @@ class BacktestEngine:
             .copy()
             .rename(columns={"level_3": "metric"})
         )
-
+       
         # Make sure the metric columns are numeric
         model_cols = [
-            "seasonal_naive",
-            "moving_average",
-            "lgbm",
+            "Naive",
+            "Moving_Average",
+            self.model_name,
         ]
 
         for col in model_cols:
@@ -491,12 +495,12 @@ class BacktestEngine:
                 )
 
         fva_df["fva_moving_average_vs_naive"] = self.fva(
-            fva_df["seasonal_naive"],
-            fva_df["moving_average"],
+            fva_df["Naive"],
+            fva_df["Moving_Average"],
         )
 
         fva_df["fva_model_vs_naive"] = self.fva(
-            fva_df["seasonal_naive"],
+            fva_df["Naive"],
             fva_df["lgbm"],
         )
         fva_df = fva_df[['window_id','metric','fva_moving_average_vs_naive','fva_model_vs_naive']]
@@ -513,11 +517,6 @@ class BacktestEngine:
                             inventory_costs: dict[str, pd.Series],
                         ) -> list[dict]:
 
-        name_to_label = {
-            "Naive": "seasonal_naive",
-            "Moving_Average": "moving_average",
-            "ml": self.model_name,
-        }
 
         rows = []
       
@@ -527,7 +526,7 @@ class BacktestEngine:
                 "window_id": window_id,
                 "train_start": train_start.date(),
                 "train_end": train_end.date(),
-                "model": name_to_label[short_name],
+                "model": short_name,
                 "MAE": metrics["MAE"],
                 "BIAS%": metrics["BIAS%"],
                 "wrmsse": metrics["wrmsse"],
@@ -658,11 +657,7 @@ class BacktestEngine:
             full_data['date']>=(full_data['date'].max()-pd.Timedelta(
                 days=train_window)
                 )]
-        print('cutoff date',full_data['date'].max()-pd.Timedelta(days=train_window))
-        print('dates before and after spliting')
-        print(full_data['date'].min(),full_data['date'].max())
-        print(f'after: training_full, min date',training_full['date'].min())
-        
+                
         logger.debug(
             "Window %d: train=%s, test=%s",
             window_id,
@@ -710,11 +705,8 @@ class BacktestEngine:
             eval_end= test_end
         
         )
-
         model_preds = res.model_predictions
         model_inventory = res.inventory_policy
-
-        
 
         return model_preds,model_inventory,res.metric_rows, res.fva_rows
         

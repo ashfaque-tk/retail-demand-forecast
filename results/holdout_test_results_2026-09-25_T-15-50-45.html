@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>[TEST] Result: LGBM Recursive (1-Year Training)</title>
+    <title>[TEST] Result: LGBM Direct (1-Year Training)</title>
     <style>
         :root {
             --primary: #1e293b;
@@ -74,9 +74,9 @@
 </head>
 <body>
     <div class="container">
-        <h1 class="header-title">[TEST] Result: LGBM Recursive (1-Year Training)</h1>
+        <h1 class="header-title">[TEST] Result: LGBM Direct (1-Year Training)</h1>
         <div class="meta-subtitle">
-            Generated: 2026-09-24 23:32:12 | Mode: <strong>TEST</strong> (1 Window/Split)<br/>
+            Generated: 2026-09-25 15:52:18 | Mode: <strong>TEST</strong> (1 Window/Split)<br/>
             <span class="meta-tag">Lead Time: 4d</span>
             <span class="meta-tag">Review Period: 7d</span>
             <span class="meta-tag">Safety Stock Policy: RMSE (Norm Sim)</span>
@@ -85,28 +85,28 @@
         <div class="hero-banner">
             <!-- Left Column: Key Accuracy Metrics -->
             <div class="hero-column">
-                <div class="headline">Winning Model: SEASONAL_NAIVE</div>
+                <div class="headline">Winning Model: LGBM</div>
                 <div class="subhead">Accuracy Profile (Avg Across 1 Window/Split)</div>
                 <ul>
-                    <li><strong>cum_MAE:</strong> 6.3956</li>
-                    <li><strong>cum_BIAS:</strong> -0.9444</li>
-                    <li><strong>MAE:</strong> 1.3033</li>
-                    <li><strong>BIAS%:</strong> -7.34%</li>
+                    <li><strong>cum_MAE:</strong> 5.3905</li>
+                    <li><strong>cum_BIAS:</strong> -0.4042</li>
+                    <li><strong>MAE:</strong> 1.0816</li>
+                    <li><strong>BIAS%:</strong> -3.14%</li>
                 </ul>
             </div>
 
             <!-- Right Column: Business Impact & Costs -->
             <div class="hero-column">
                 <div class="subhead">Business Impact</div>
-                <div class="metric-val">$4,364.93</div>
+                <div class="metric-val">$3,830.00</div>
                 <div style="font-size: 0.78rem; color: #64748b;">Avg total cost across 1 window/split</div>
 
                 <div class="subhead">Cost Savings vs Other Models</div>
                 <ul>
                 
-                    <li><strong>$81.78</strong> vs Lgbm (1.84% FVA)</li>
+                    <li><strong>$614.88</strong> vs Moving Average (13.83% FVA)</li>
                 
-                    <li><strong>$79.95</strong> vs Moving Average (1.80% FVA)</li>
+                    <li><strong>$534.93</strong> vs Naive (12.26% FVA)</li>
                 
                 </ul>
             </div>
@@ -129,18 +129,7 @@
   </thead>
   <tbody>
     <tr>
-      <td>lgbm</td>
-      <td>2.1153</td>
-      <td>11.54%</td>
-      <td>0.8167</td>
-      <td>1.4849</td>
-      <td>6.1717</td>
-      <td>$4,204.37</td>
-      <td>$242.34</td>
-      <td>$4,446.71</td>
-    </tr>
-    <tr>
-      <td>moving_average</td>
+      <td>Moving_Average</td>
       <td>1.1700</td>
       <td>0.01%</td>
       <td>0.9378</td>
@@ -151,7 +140,7 @@
       <td>$4,444.88</td>
     </tr>
     <tr>
-      <td>seasonal_naive</td>
+      <td>Naive</td>
       <td>1.3033</td>
       <td>-7.34%</td>
       <td>1.2364</td>
@@ -160,6 +149,17 @@
       <td>$3,944.87</td>
       <td>$420.06</td>
       <td>$4,364.93</td>
+    </tr>
+    <tr>
+      <td>lgbm</td>
+      <td>1.0816</td>
+      <td>-3.14%</td>
+      <td>0.8302</td>
+      <td>-0.4042</td>
+      <td>5.3905</td>
+      <td>$3,526.26</td>
+      <td>$303.74</td>
+      <td>$3,830.00</td>
     </tr>
   </tbody>
 </table>
@@ -177,32 +177,32 @@
     <tr>
       <td>MAE</td>
       <td>10.23</td>
-      <td>-62.30</td>
+      <td>17.02</td>
     </tr>
     <tr>
       <td>cum_MAE</td>
       <td>7.77</td>
-      <td>3.50</td>
+      <td>15.72</td>
     </tr>
     <tr>
       <td>holding_cost</td>
       <td>-9.50</td>
-      <td>-6.58</td>
+      <td>10.61</td>
     </tr>
     <tr>
       <td>stockout_cost</td>
       <td>70.23</td>
-      <td>42.31</td>
+      <td>27.69</td>
     </tr>
     <tr>
       <td>total_cost</td>
       <td>-1.83</td>
-      <td>-1.87</td>
+      <td>12.26</td>
     </tr>
     <tr>
       <td>wrmsse</td>
       <td>24.15</td>
-      <td>33.95</td>
+      <td>32.85</td>
     </tr>
   </tbody>
 </table>

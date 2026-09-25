@@ -29,7 +29,7 @@ from src.utils import log_experiment_results
 from src.features import FeatureBuilder
 
 from scripts.generate_report import generate_experiment_html_report
-
+from scripts.populate_dbs import populate_inventory,populate_actuals,populate_predictions
 # logging initiation
 logging.basicConfig(
     level=logging.INFO,
@@ -250,11 +250,22 @@ def main():
                     eval_mode='test')
 
         logger.info(f"Winning Model on Test Set: {winner}. Deploy ")
-        print(test_inventory)
+        
+        print(f'champion model is {winner}, inventory: {test_inventory[winner]}')
+        
         ### winning_model preds and inventory will be uploaded to dB, and also saved to parquet
         save_to_parquet(models_data=test_preds,filename=f'test_preds-{model}-{type}-{timestamp_str}.parquet')
         save_to_parquet(models_data=test_inventory,filename=f'test_inventory-{model}-{type}-{timestamp_str}.parquet')
         # save to postgres the forecasts, and inventory
+        if args.persist_format == 'db':
+            logger.info(f'{run_mode} champion result saving into postgres db: inventory')
+            populate_inventory(
+                df=test_inventory[winner],
+                model_name=winner,
+                forecast_type= type,
+                lead_time_days= lead_time,
+                review_period_days= review_period)
+
     
     elif run_mode == "backtest":
 
