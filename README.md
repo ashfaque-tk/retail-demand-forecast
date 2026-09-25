@@ -21,37 +21,31 @@ The system covers centralized feature engineering, recursive and direct forecast
 
 **Current limitation:** the benchmark does not yet evaluate cold starts, partial histories, late product launches, or product exits. The remaining future data is reserved for the v3 production-style simulation.
 
----
+Model selection: Recursive LGBM, Direct LGBM, and the operational baselines are evaluated through the same walk-forward framework. Inventory performance is evaluated alongside forecast performance during each backtest. After the backtesting experiments, the selected candidate is evaluated once on the separate holdout test before the deployment decision. The current setup is not auto  due to system limitations.
 
 ## Architecture
 
-```mermaid
 flowchart LR
-    DATA["Curated 300-SKU<br/>M5 history"] --> FEATURES["Central feature class"]
+    A["M5 Data<br/>300 SKUs"] --> B["Feature Engineering"]
+    B --> C["Walk-Forward Backtesting"]
 
-    FEATURES --> BACKTEST["Walk-forward<br/>validation"]
+    C --> D["Forecast Evaluation"]
+    C --> E["Inventory Evaluation"]
 
-    BACKTEST --> ML_R["LightGBM<br/>recursive"]
-    BACKTEST --> ML_D["LightGBM<br/>direct"]
-    BACKTEST --> BASELINES["Seasonal naive<br/>Moving average"]
+    D --> F["Model Selection"]
+    E --> F
 
-    ML_R --> METRICS["Forecast metrics<br/>and FVA"]
-    ML_D --> METRICS
-    BASELINES --> METRICS
+    F --> G["Holdout Test"]
+    G --> H["Forecast + Inventory Evaluation"]
 
-    ML_R --> INVENTORY["Periodic-review<br/>inventory simulation"]
-    ML_D --> INVENTORY
-    BASELINES --> INVENTORY
+    H --> I["JSON / HTML Reports"]
+    H --> J[("PostgreSQL")]
 
-    METRICS --> REPORTS["JSON / HTML<br/>experiment reports"]
-    INVENTORY --> DB[("PostgreSQL<br/>results & inventory")]
+    J --> K["FastAPI"]
+    K --> L["Dashboard"]
 
-    REPORTS --> DB
-    DB --> API["FastAPI<br/>forecast endpoint"]
-
-    FUTURE["Remaining future data"] -.-> SIM["v3 production-style<br/>simulation"]
-    SIM -.-> BACKTEST
-```
+    M["Future Data"] -.-> N["V3 Production Simulation"]
+    N -.-> J
 
 ---
 
