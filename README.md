@@ -227,42 +227,44 @@ The current FastAPI service exposes pre-computed forecast and inventory results 
 
 ```http
 POST /forecast
+```
 
-## Dashboard
+The FastAPI service retrieves pre-computed forecasts and inventory information from PostgreSQL for a requested `store_id` and `item_id`.
 
-The dashboard provides a consolidated view of:
+The endpoint returns:
 
-* Forecast performance
-* Model/backtest comparisons
-* Baseline comparisons
-* Forecast bias and error
-* Inventory performance
-* Replenishment decisions
-* Holding and stockout costs
+* 28-day demand forecasts
+* Prediction dates
+* Quantile forecasts (`q10`, `q90`)
+* Safety stock
+* Reorder point
+* Order-up-to level
 
-The dashboard is intended to connect the forecasting layer with the downstream inventory decision rather than treating forecast accuracy as the only business outcome.
+The API currently serves persisted results; model training and forecast generation are performed separately by the forecasting pipeline.
 
 ---
 
-## Current Drawbacks
+## Current Limitations
 
 ### Direct forecasting memory requirements
 
-Direct multi-horizon training creates up to 28 forecast rows per historical origin. This substantially increases the training dataset and memory requirements.
+Direct multi-horizon training creates up to 28 forecast rows per historical origin, substantially increasing training-data size and memory requirements.
 
 With 300 SKUs, the current implementation is feasible on local hardware but becomes increasingly expensive as SKU coverage increases.
 
 ### Limited benchmark scale
 
-The current benchmark intentionally uses 300 curated SKUs rather than the complete M5 panel. Scaling the same implementation beyond this scope will require more efficient feature construction, training, or forecasting infrastructure.
+The current benchmark intentionally uses 300 curated SKUs rather than the complete M5 panel. Scaling the same implementation beyond this scope will require more efficient feature generation and training.
 
 ### Limited lifecycle coverage
 
-The current benchmark assumes complete historical coverage for the selected SKUs. Cold starts, partial histories, product launches, and product exits remain outside the current evaluation.
+The current benchmark uses SKUs with complete historical coverage. Cold starts, partial histories, product launches, and product exits are not yet evaluated.
 
 ---
 
 ## Future Work
+
+
 
 ### 1. Stronger forecasting baselines
 
@@ -280,30 +282,9 @@ Evaluate additional methods before making deployment decisions:
 * Improve feature-generation efficiency
 * Extend the pipeline beyond the current 300-SKU benchmark
 
-### 3. Richer SKU information
-
-Investigate:
-
-* Product and category attributes
-* Price sensitivity
-* Promotion response
-* Lifecycle stage
-* Intermittency
-* Seasonality
-* Shared effects across related SKUs
-
-### 4. V3 production-style simulation
+### V3 production-style simulation
 
 Use the remaining future data to replay the forecasting and inventory process sequentially:
-
-* Generate forecasts only from information available at each point in time
-* Generate replenishment orders at review periods
-* Simulate arrivals and inventory evolution
-* Calculate realized sales and lost sales after demand occurs
-* Accumulate inventory costs over time
-* Evaluate partial-history and cold-start scenarios
-
----
 
 ## Running the Pipeline
 
