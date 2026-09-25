@@ -21,10 +21,12 @@ The system covers centralized feature engineering, recursive and direct forecast
 
 **Current limitation:** the benchmark does not yet evaluate cold starts, partial histories, late product launches, or product exits. The remaining future data is reserved for the v3 production-style simulation.
 
-Model selection: Recursive LGBM, Direct LGBM, and the operational baselines are evaluated through the same walk-forward framework. Inventory performance is evaluated alongside forecast performance during each backtest. After the backtesting experiments, the selected candidate is evaluated once on the separate holdout test before the deployment decision. The current setup is not auto  due to system limitations.
+
+---
 
 ## Architecture
 
+```mermaid
 flowchart LR
     A["M5 Data<br/>300 SKUs"] --> B["Feature Engineering"]
     B --> C["Walk-Forward Backtesting"]
@@ -46,6 +48,7 @@ flowchart LR
 
     M["Future Data"] -.-> N["V3 Production Simulation"]
     N -.-> J
+```
 
 ---
 
