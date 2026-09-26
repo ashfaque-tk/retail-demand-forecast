@@ -1,13 +1,21 @@
 """Backtest Engine for retail demand forecasting and inventory replenishment evaluation.
 
-Orchestrates walk-forward validation windows (rolling or expanding), baseline comparisons
-(Seasonal Naive, Moving Average), ML model training, recursive multi-step forecasting,
-out-of-sample error tracking, and periodic inventory replenishment policy evaluation.
+Orchestrates walk-forward validation windows (rolling or expanding), baseline comparisons,
+ML model training, recursive multi-step forecasting, out-of-sample error tracking, and
+periodic inventory replenishment policy evaluation.
+
+Baselines are supplied by name and dispatched through
+:class:`src.baselines.Baseline`, so adding a method to that class requires no edit
+here: the engine never names an individual baseline outside ``DEFAULT_BASELINES`` and
+the per-baseline kwargs mapping. Every model that is scored - the ML model plus each
+configured baseline - is carried through the same metric, FVA and inventory paths, so
+a new baseline is reported on the same terms as the incumbent ones.
 
 Eliminates mutable global state and provides clean, structured data containers.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from dataclasses import dataclass, field
@@ -20,19 +28,37 @@ from src.backtest_windows import (
     generate_rolling_windows,
     split_data,
 )
-from src.baselines import seasonal_naive, simple_moving_average
+from src.baselines import Baseline
 from src.features import FeatureBuilder
 from src.inventory_policy import (
     compute_rolling_tau_error,calculate_error_statistics,
      InventoryPolicy
 )
-from src.metrics import fva, get_all_metrics
+from src.metrics import MetricsCalculator, fva
 from src.model_selector import SelectModel
 from src.forecaster import Forecaster
 from src.utils import get_items_with_min_history
 from config import PIPELINE_CONFIG
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_BASELINES: tuple[str, ...] = (
+    "seasonal_naive",
+    "simple_moving_average",
+    "seasonal_moving_average",
+    "croston",
+    "croston_sba"
+)
+
+FVA_METRICS: tuple[str, ...] = (
+    "MAE",
+    "wrmsse",
+    "WAPE",
+    "cum_MAE",
+    "holding_cost",
+    "stockout_cost",
+    "total_cost",
+)
 
 
 @dataclass
@@ -106,6 +132,18 @@ class BacktestEngine:
         Optional cap on the number of windows to execute (useful for debugging).
     use_log_transform : bool, default False
         Whether the ML model fits on log1p(target).
+    baselines : Sequence[str] | Mapping[str, dict] | None
+        Baselines to score alongside the ML model. A list of names uses each
+        method's default hyperparameters; a mapping of ``name -> kwargs`` passes
+        method-specific hyperparameters (e.g. ``{"seasonal_naive": {"lag_days": 7}}``).
+        Names must be :attr:`src.baselines.Baseline.METHOD_NAMES` entries that
+        resolve to a callable method. Defaults to :data:`DEFAULT_BASELINES`.
+    fva_reference : str | None, optional
+        Baseline that every other model is measured against in the FVA table.
+        Defaults to the first entry of ``baselines``. Must be one of ``baselines``.
+    baseline_quantiles : tuple[float, ...] | None, optional
+        Quantile levels handed to :class:`~src.baselines.Baseline`. ``None``
+        (default) keeps baseline output point-only, matching the ML path.
     """
 
     def __init__(
@@ -125,7 +163,9 @@ class BacktestEngine:
         min_history_days: int = 100,
         max_windows: int | None = None,
         use_log_transform: bool = False,
-        baselines : list[str] = ['Naive','Moving_Average']
+        baselines : Sequence[str] | Mapping[str, dict[str, Any]] | None = None,
+        fva_reference : str | None = None,
+        baseline_quantiles : tuple[float, ...] | None = None,
     ) -> None:
         self.model_name = model_name
         self.forecast_type = forecast_type.lower()
@@ -142,27 +182,20 @@ class BacktestEngine:
         self.max_windows = max_windows
         self.use_log_transform = use_log_transform
         self.stockout_rate = stockout_rate
-        self.baselines = baselines
+        self.baseline_quantiles = baseline_quantiles
         # Review period + lead time total risk horizon (tau)
         self.tau_days = self.lead_time_days + self.review_period_days
 
+        # Baselines are resolved once, here, so an unregistered or misspelled name
+        # fails at construction rather than quietly dropping out of every report.
+        self.baselines, self.baseline_params = self._resolve_baselines(baselines)
+        self.fva_reference = self._resolve_fva_reference(fva_reference)
+        # Every model this run scores, ML first. All per-model state below is keyed
+        # by these names, so a new baseline needs no edit outside _resolve_baselines.
+        self.tracked_models: list[str] = [self.model_name, *self.baselines]
+
         # Encapsulated stateful error buffers (replaces mutable module globals)
-        
-        self.oos_errors: dict[str, list[pd.Series]] = {
-            self.model_name: [],
-            "Naive": [],
-            "Moving_Average": [],
-        }
-        # inventory holder
-        self.inventory: dict[str, Optional[InventoryPolicy]] = {
-            "Naive": None,
-            "Moving_Average": None,
-            self.model_name: None,
-        }
-        ### initlize a similar one for  storing actuals and preds
-        self.actuals_preds :dict[str,pd.DataFrame] = {'ml':pd.DataFrame(),
-                                                      'ma':pd.DataFrame(),
-                                                      'naive':pd.DataFrame()}
+        self._init_state_containers()
 
         # Cache for last executed window outputs (for easy plotting / inspection)
         self.last_window_result: WindowResult | None = None
@@ -180,10 +213,69 @@ class BacktestEngine:
         self.forecaster = Forecaster(model=self.model, feature_builder=self.feature_builder,
                                      original_features=self.feature_names,forecast_type=self.forecast_type)
 
-        
+    def _resolve_baselines(
+        self,
+        baselines: Sequence[str] | Mapping[str, dict[str, Any]] | None,
+    ) -> tuple[list[str], dict[str, dict[str, Any]]]:
+        """Normalise the baseline spec to (names, per-method kwargs).
+
+        Validation is strict on purpose. The previous if/elif dispatch logged a
+        warning and skipped an unrecognised name, which produced a metrics table
+        that silently omitted a baseline the caller believed was being scored.
+        """
+        if baselines is None:
+            baselines = DEFAULT_BASELINES
+
+        if isinstance(baselines, Mapping):
+            params = {str(name): dict(kwargs or {}) for name, kwargs in baselines.items()}
+        else:
+            params = {str(name): {} for name in baselines}
+
+        names = list(params)
+        if not names:
+            raise ValueError("baselines is empty; nothing to compare the model against.")
+
+        unknown = [n for n in names if n not in Baseline.METHOD_NAMES]
+        if unknown:
+            raise ValueError(
+                f"Unknown baseline(s) {unknown}. Valid names: {Baseline.METHOD_NAMES}"
+            )
+
+        # METHOD_NAMES is a declaration; a name can be declared without a matching
+        # method, in which case getattr would fail deep inside the window loop.
+        unimplemented = [n for n in names if not callable(getattr(Baseline, n, None))]
+        if unimplemented:
+            available = [n for n in Baseline.METHOD_NAMES if callable(getattr(Baseline, n, None))]
+            raise ValueError(
+                f"Baseline(s) {unimplemented} are listed in Baseline.METHOD_NAMES but "
+                f"no such method exists on src.baselines.Baseline. Callable methods: {available}"
+            )
+
+        logger.info("Baselines configured: %s", names)
+        return names, params
+
+    def _resolve_fva_reference(self, fva_reference: str | None) -> str:
+        """Pick the baseline every other model is measured against."""
+        if fva_reference is None:
+            return self.baselines[0]
+        if fva_reference not in self.baselines:
+            raise ValueError(
+                f"fva_reference {fva_reference!r} is not one of the configured "
+                f"baselines {self.baselines}."
+            )
+        return fva_reference
+
+    def _init_state_containers(self) -> None:
+        """(Re)build the per-model buffers keyed by :attr:`tracked_models`."""
+        self.oos_errors: dict[str, list[pd.Series]] = {name: [] for name in self.tracked_models}
+        # inventory holder
+        self.inventory: dict[str, Optional[InventoryPolicy]] = {name: None for name in self.tracked_models}
+        ### initlize a similar one for  storing actuals and preds
+        self.actuals_preds: dict[str, pd.DataFrame] = {name: pd.DataFrame() for name in self.tracked_models}
+
     def reset_state(self) -> None:
-        """Clears accumulated out-of-sample errors and cached window results."""
-        self.oos_errors = {"ml": [], "Moving_Average": [], "Naive": []}
+        """Clears accumulated out-of-sample errors, predictions and cached window results."""
+        self._init_state_containers()
         self.last_window_result = None
 
     def generate_windows(self, full_data: pd.DataFrame) -> list[dict[str, Any]]:
@@ -250,12 +342,12 @@ class BacktestEngine:
             test_df=eval_df,
         )
 
-        metrics_ml = get_all_metrics(
+        metrics_ml = MetricsCalculator(
             train_wnd,
             eval_df,
             forecasted_demands,
-            risk_period=self.tau_days
-        )
+            risk_period=self.tau_days,
+        ).all_metrics()
 
         # ----------------------------------------------------------
         # Baseline forecast and predictions 
@@ -272,6 +364,7 @@ class BacktestEngine:
             **base_preds
         }
 
+
         models_metrics:dict[str,dict[str,Any]] = {
             self.model_name : metrics_ml, #model name 
             **base_metrics
@@ -286,11 +379,20 @@ class BacktestEngine:
         ''' populate actual_preds dictionary with values'''
 
         for short_name, cal_preds in models_preds.items():
+                # A prediction frame may carry more than the point forecast: the
+                # baselines attach their own scoring keys (dept_id, cat_id,
+                # real_sales) and each method keeps whatever intermediates it
+                # built. Merging those against actual_df produces dept_id_x /
+                # dept_id_y suffixed columns and method-specific debris, so only
+                # the join keys, the point forecast and quantile levels are kept.
+                # actual_df is the single source for everything else.
+                pred_cols = ["sales_pred", *[c for c in cal_preds.columns if c.startswith("q")]]
+
                 # Merge evaluation actuals with current model predictions
                 forecasts_df_model = (
                                 actual_df
                                 .merge(
-                                    cal_preds,
+                                    cal_preds[["item_id", "date", *pred_cols]],
                                     on=["item_id", "date"],
                                     how="inner",
                                 )
@@ -394,7 +496,7 @@ class BacktestEngine:
             sim_df = policy.daily_simulation(
                 actual_sales=eval_wnd,
                 forecasted_demand=current_forecasts,
-                model_name=self.model_name,
+                model_name=short_name,
                 forecast_type=self.forecast_type,
                 store_id= 'CA_1'
             )
@@ -450,64 +552,81 @@ class BacktestEngine:
     def _calculate_fva(self,
                         metric_rows: list[dict],
                     ) -> list[dict]:
+        """Forecast Value Added of every scored model against the reference baseline.
+
+        One row per (window_id, metric) with a ``fva_<model>_vs_<reference>`` column
+        per model, so a newly configured baseline appears in the FVA table without
+        this method naming it. The previous implementation listed the incumbent
+        baselines and the model name explicitly, which meant a new baseline got
+        metrics but never an FVA column.
+        """
+        if not metric_rows:
+            return []
 
         df_metrics = pd.DataFrame(metric_rows)
 
-        pivot_df = (
-            df_metrics
-            .pivot(
-                index=["window_id", "train_start", "train_end"],
-                columns="model",
+        key_cols = ["window_id", "train_start", "train_end", "model"]
+        value_cols = [c for c in df_metrics.columns if c not in key_cols]
+        target_metrics = [m for m in FVA_METRICS if m in value_cols]
+
+        present = [m for m in self.tracked_models if m in set(df_metrics["model"])]
+        if not present or not target_metrics:
+            return []
+
+        reference = self.fva_reference if self.fva_reference in present else present[0]
+        if reference != self.fva_reference:
+            logger.warning(
+                "FVA reference baseline %r is absent from this window; falling back to %r.",
+                self.fva_reference, reference,
             )
-            .stack(level=0, future_stack=True)
-            .reset_index()
+
+        long_df = (
+            df_metrics
+            .melt(
+                id_vars=key_cols,
+                value_vars=target_metrics,
+                var_name="metric",
+                value_name="value",
+            )
+        )
+        long_df["value"] = pd.to_numeric(long_df["value"], errors="coerce")
+
+        ref_df = (
+            long_df[long_df["model"] == reference]
+            [["window_id", "train_start", "train_end", "metric", "value"]]
+            .rename(columns={"value": "reference_value"})
+        )
+        long_df = long_df.merge(
+            ref_df,
+            on=["window_id", "train_start", "train_end", "metric"],
+            how="left",
         )
 
-        target_metrics = [
-            "MAE",
-            "wrmsse",
-            "cum_MAE",
-            "holding_cost",
-            "stockout_cost",
-            "total_cost"
-        ]
-
-        fva_df = (
-            pivot_df[
-                pivot_df["level_3"].isin(target_metrics)
-            ]
-            .copy()
-            .rename(columns={"level_3": "metric"})
-        )
-       
-        # Make sure the metric columns are numeric
-        model_cols = [
-            "Naive",
-            "Moving_Average",
-            self.model_name,
-        ]
-
-        for col in model_cols:
-            if col in fva_df.columns:
-                fva_df[col] = pd.to_numeric(
-                    fva_df[col],
-                    errors="coerce",
+        rows: list[dict] = []
+        for (window_id, metric), grp in long_df.groupby(
+            ["window_id", "metric"], observed=True, sort=True
+        ):
+            values = dict(zip(grp["model"], grp["value"]))
+            ref_value = values.get(reference, float("nan"))
+            row: dict[str, Any] = {"window_id": window_id, "metric": metric}
+            for model_name in present:
+                row[f"fva_{model_name}_vs_{reference}"] = self.fva(
+                    ref_value, values.get(model_name, float("nan"))
                 )
+            rows.append(row)
 
-        fva_df["fva_moving_average_vs_naive"] = self.fva(
-            fva_df["Naive"],
-            fva_df["Moving_Average"],
-        )
+        return rows
 
-        fva_df["fva_model_vs_naive"] = self.fva(
-            fva_df["Naive"],
-            fva_df["lgbm"],
-        )
-        fva_df = fva_df[['window_id','metric','fva_moving_average_vs_naive','fva_model_vs_naive']]
-        return fva_df.to_dict(orient="records")
+    def fva(self, baseline: float, model: float) -> float:
+        """Percent improvement of ``model`` over ``baseline``; NaN when undefined.
 
-    def fva(self, baseline: pd.Series, model: pd.Series) -> pd.Series:
-        return ((baseline - model) * 100 / baseline).round(2)
+        A zero or missing baseline value has no meaningful percentage, and
+        returning NaN keeps it out of the report averages instead of emitting an
+        infinite or fabricated number.
+        """
+        if pd.isna(baseline) or pd.isna(model) or baseline == 0:
+            return float("nan")
+        return round((baseline - model) * 100 / baseline, 2)
 
     def _build_metric_rows( self,
                             window_id: int,
@@ -530,6 +649,7 @@ class BacktestEngine:
                 "MAE": metrics["MAE"],
                 "BIAS%": metrics["BIAS%"],
                 "wrmsse": metrics["wrmsse"],
+                'WAPE'  : metrics['WAPE'],
                 "cum_BIAS" : metrics['cum_BIAS'],
                 "cum_MAE"  : metrics['cum_MAE']
             }
@@ -715,27 +835,57 @@ class BacktestEngine:
     def _baselines_metrics(
             self,
             train_df:pd.DataFrame,
-            eval_df:pd.DataFrame) : # should return baseline preds and metrics
+            eval_df:pd.DataFrame
+        ) -> tuple[dict[str,pd.DataFrame],dict[str,dict[str,Any]]]:
+        """Forecast and score every configured baseline for one window.
 
-        baselines = self.baselines   # provide a list of default baselines 
-        baseline_preds = {}
-        baseline_metrics = {}
+        A single :class:`~src.baselines.Baseline` is constructed per window and
+        dispatched to by name through ``Baseline.run``, replacing the previous
+        if/elif chain that recognised only seasonal naive and moving average and
+        skipped everything else with a warning.
+        """
 
-        for b_name in baselines:
-            if b_name == "Naive":
-                preds = seasonal_naive(train_df, eval_df)
-            elif b_name == "Moving_Average":
-                preds = simple_moving_average(train_df, eval_df, window_days=180)
-            else:
-                logger.warning(f"Unknown baseline: {b_name}. Skipping.")
-                continue
+        baseline = Baseline(
+            train_df=train_df,
+            test_df=eval_df,
+            quantiles=self.baseline_quantiles,
+        )
+
+        baseline_preds:dict[str,pd.DataFrame] = {}
+        baseline_metrics:dict[str,dict[str,Any]] = {}
+
+        for b_name in self.baselines:
+            params = dict(self.baseline_params.get(b_name, {}))
+
+            # Any method that forecasts a fixed horizon gets the engine's horizon
+            # unless the caller pinned it, so a baseline cannot silently score a
+            # 28-day default against a differently sized evaluation window.
+            signature = inspect.signature(getattr(type(baseline), b_name))
+            if "horizon" in signature.parameters:
+                params.setdefault("horizon", self.horizon_days)
+
+            try:
+                preds = baseline.run(b_name, **params)
+            except NotImplementedError as exc:
+                raise NotImplementedError(
+                    f"Baseline {b_name!r} is configured on this engine but raises "
+                    f"NotImplementedError. Implement it in src/baselines.py or "
+                    f"remove it from the `baselines` argument. Original error: {exc}"
+                ) from exc
+            except TypeError as exc:
+                # Almost always a hyperparameter the method does not accept, e.g.
+                # alpha on a statsforecast model that estimates it internally.
+                raise TypeError(
+                    f"Baseline {b_name!r} rejected its hyperparameters {params}. "
+                    f"Accepted: {list(signature.parameters)}. Original error: {exc}"
+                ) from exc
 
             baseline_preds[b_name] = preds
 
             # 1. Accuracy metrics
-            baseline_metrics[b_name] = get_all_metrics(
+            baseline_metrics[b_name] = MetricsCalculator(
                 train_df, eval_df, preds, risk_period=self.tau_days
-            )
+            ).all_metrics()
         return baseline_preds, baseline_metrics
     
     def get_last_predictions(self) -> dict[str, Any] | None:
