@@ -7,10 +7,9 @@ chain that silently skips unrecognised entries.
 
 Method status
 -------------
-``seasonal_naive`` and ``simple_moving_average`` are complete. The remaining
-methods raise :class:`NotImplementedError`; each docstring specifies the
-algorithm, the failure modes specific to this panel, and the output
-validation the method is expected to satisfy.
+``seasonal_naive``, ``simple_moving_average``, ``seasonal_moving_average``,
+``croston`` and ``croston_sba`` are complete. ``theta`` raises
+:class:`NotImplementedError`;
 
 Return contract
 ---------------
@@ -32,6 +31,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
+from statsforecast import StatsForecast
+from statsforecast.models import CrostonClassic,CrostonSBA, CrostonOptimized
 
 class Baseline:
     """Univariate per-SKU forecast baselines.
@@ -220,290 +221,140 @@ class Baseline:
             the horizon. When True a line is fitted through the non-NaN trend
             points and extrapolated.
 
-        Algorithm
-        ---------
-        1. Trend. 
-        2. Decouple. ``detrended = sales / trend``. Periods where the trend
-           is zero, negative, or undefined require explicit handling, since
-           they otherwise propagate NaN into the seasonal means.
-        3. Seasonal index. Average ``detrended`` within each seasonal slot
-           (day-of-week when *m* = 7). Slots with no observations remain NaN.
-        4. Normalise. ``index = index * m / index.sum()``. Omitting this
-           step biases every forecast by the normalisation error across the
-           full horizon. The indices must sum to *m* after normalisation.
-        5. Re-couple. ``forecast = trend_extrapolated * index[slot]``.
-           Centring leaves the final *m*/2 periods without a trend value, so
-           the most recent available trend sits at ``origin - m/2`` rather
-           than at the origin.
-        6. Clip at zero.
-
         """
-        train = self._sorted_train() 
-        train= train[
-                    train["date"] > train["date"].max() - pd.Timedelta(days=365)
-                ]
-        grp = train.groupby('item_id',observed=True)['sales']
-        # 
-        level = grp.transform(lambda s: s.rolling(season_length,min_periods=1).mean())
-        # detrending, 
-        detrended = train['sales']/ level 
+        train = self._sorted_train()
+        train = train[train["date"] > train["date"].max() - pd.Timedelta(days=365)].copy()
 
-        ## season
-        season = (detrended.groupby([train['item_id'],train['date'].dt.dayofweek],
-        observed=True).mean().rename('season_factor').reset_index())
+        # 1. Rolling trend / level estimation
+        grp = train.groupby('item_id', observed=True)['sales']
+        level = grp.transform(lambda s: s.rolling(season_length, min_periods=1).mean())
 
-        ## normalize 
-        season['season_factor'] = (season['season_factor']*season_length
-                                   /season.groupby('item_id')['season_factor'].transform('sum'))
+        # 2. Detrending
+        train['detrended'] = train['sales'] / level.replace(0, np.nan)  # Avoid div by zero
 
-        # calculate current base level using deseasonalized recent sales 
-        train['dayofweek'] = train['date'].dt.dayofweek 
-        train = train.merge(season,on=['item_id','dayofweek'],how='left')
-        train['sales_deseason'] = train['sales']/train['season_factor']
+        # 3. Calculate seasonality factor by item and day-of-week
+        train['dayofweek'] = train['date'].dt.dayofweek
+
+        season = (
+            train.groupby(['item_id', 'dayofweek'], observed=True)['detrended']
+            .mean()
+            .rename('season_factor')
+            .reset_index()
+        )
+
+        # 4. Normalize seasonality factors so they sum to season_length per item
+        season['season_factor'] = (
+            season['season_factor'] * season_length /
+            season.groupby('item_id', observed=True)['season_factor'].transform('sum')
+        )
+
+        # 5. Deseasonalize train sales to compute base level per item
+        train = train.merge(season, on=['item_id', 'dayofweek'], how='left')
+        train['sales_deseason'] = train['sales'] / train['season_factor'].replace(0, np.nan)
 
         item_base = (
             train.groupby("item_id", observed=True)["sales_deseason"]
             .agg(sales_pred="mean")
-            .reset_index() # this serves as base 
+            .reset_index()
         )
 
-        preds = (self.test
-                 .assign(dayofweek=lambda d:d['date'].dt.dayofweek)
-                 .merge(item_base,on='item_id',how='left')
-                 .merge(season,on=['item_id','dayofweek'],how='left'))
+        # 6. Forecast on test set
+        preds = (
+            self.test.copy()
+            .assign(dayofweek=lambda d: d['date'].dt.dayofweek)
+            .merge(item_base, on='item_id', how='left')
+            .merge(season, on=['item_id', 'dayofweek'], how='left')
+        )
 
-        preds['sales_pred'] = (preds['sales_pred']*preds['season_factor']).clip(lower=0)
+        preds['sales_pred'] = (preds['sales_pred'] * preds['season_factor']).clip(lower=0)
 
-        return self._finish(preds,'seasonal_moving_average')
+        # Fill any remaining NaNs (for items with no historical sales) with 0
+        preds['sales_pred'] = preds['sales_pred'].fillna(0)
 
-    def croston(self, alpha: float = 0.1) -> pd.DataFrame:
-        """Croston's method for intermittent demand.
+        return self._finish(preds, 'seasonal_moving_average')
+
+    def _statsforecast_forecast(
+        self,
+        model: Any,
+        horizon: int,
+        method: str,
+    ) -> pd.DataFrame:
+        """Run one statsforecast model over the training panel and align it to the test frame.
+
+        statsforecast forecasts ``horizon`` steps forward from each series' own last
+        date, so a panel whose items end on different days yields dates that do not
+        line up with ``self.test``. Reindexing onto the test keys keeps the
+        row-count contract that :meth:`_validate_output` enforces, and the inner
+        join makes a genuine misalignment visible there rather than as a silent
+        partial score.
+        """
+        sf = StatsForecast(models=[model], freq='D', n_jobs=-1)
+
+        # Prepare train set (statsforecast expects 'unique_id', 'ds', 'y')
+        train_sf = self._sorted_train().rename(
+            columns={'item_id': 'unique_id', 'date': 'ds', 'sales': 'y'}
+        )
+
+        forecast_res = sf.forecast(df=train_sf, h=horizon)
+
+        # statsforecast returns polars or pandas depending on version and input
+        # dtype; normalise to pandas before the column surgery below.
+        if hasattr(forecast_res, "to_pandas"):
+            forecast_df: pd.DataFrame = forecast_res.to_pandas()  # type: ignore[assignment]
+        else:
+            forecast_df = forecast_res #type:ignore
+
+        if 'unique_id' not in forecast_df.columns:
+            forecast_df = forecast_df.reset_index()
+
+        forecast_df = forecast_df.rename(
+            columns={'unique_id': 'item_id', 'ds': 'date', model.alias: 'sales_pred'}
+        )
+
+        # statsforecast returns item_id as the string it was grouped on; the panel
+        # carries a Categorical. Cast both sides so the join keys compare equal.
+        forecast_df['item_id'] = forecast_df['item_id'].astype(str)
+        pred_df = (
+            self.test
+            .assign(item_id=lambda d: d['item_id'].astype(str))
+            .merge(
+                forecast_df[['item_id', 'date', 'sales_pred']],
+                on=['item_id', 'date'],
+                how='left',
+            )
+        )
+        return self._finish(pred_df, method)
+
+    def croston(self, horizon: int = 28) -> pd.DataFrame:
+        """Croston's method for intermittent demand, via statsforecast's CrostonClassic.
 
         Croston is the primary non-seasonal baseline for this panel: 93.3% of
         items are classified intermittent or erratic under the Syntetos-Boylan
-        demand classification. The method requires no dependency beyond
-        pandas and numpy.
+        demand classification.
 
         Parameters
         ----------
-        alpha : float
-            Exponential smoothing weight shared by both smoothers. Sitter's
-            rule of thumb is 0.1. ``alpha = 1`` degenerates to the naive
-            estimator.
-
-        Algorithm
-        ---------
-        Let the non-zero observations be ``(t_i, z_i)`` for ``i = 1..n``, and
-        let ``q_i = t_i - t_{i-1}`` be the number of periods elapsed since the
-        preceding non-zero observation.
-
-        1. Mask non-zero periods. Zero periods define the gaps but are never
-           treated as demand observations.
-        2. Compute gaps. The first gap is not observable within the window;
-           seed it with the median observed gap or with 1, and record which
-           convention was used.
-        3. Seed the smoothers at ``z_hat = z_1`` and ``q_hat = seed``.
-           Seeding from zero distorts the initial forecast, and the
-           distortion decays slowly at typical alpha values.
-        4. Update both smoothers on non-zero periods only, using a common
-           alpha against their own previous values::
-
-               z_hat = alpha * z_i + (1 - alpha) * z_hat
-               q_hat = alpha * q_i + (1 - alpha) * q_hat
-
-           Zero periods leave both quantities unchanged.
-        5. Forecast ``z_hat / q_hat``, applied uniformly across the horizon.
-           Croston carries neither seasonality nor trend by construction.
-
-        Panel-specific considerations
-        -----------------------------
-        - Items with ``n == 0`` admit no forecast. Emit zero and record the
-          count; NaN would propagate silently through groupby means and
-          metrics.
-        - Items with ``n == 1`` have no observable gap. Fall back to ``z_1``
-          and record the count. This case is realised in the current panel.
-        - ``q_hat == 0`` requires a guard before division.
-        - A moving average on this panel reports a near-zero level and
-          supports little inventory. Croston addresses demand size and
-          demand frequency separately, which is the behaviour intermittent
-          inventory actually requires.
-        - Group with ``observed=True``.
-
-        Validation
-        ----------
-        - No NaN values and no negative values.
-        - ``yhat <= max(z_i)`` for every item.
-        - ``z_hat / q_hat`` is materially smaller than the mean of the
-          non-zero spikes; a ratio near that mean indicates the gaps are
-          being counted incorrectly.
-        - The fraction of items routed to the ``n <= 1`` fallback is reported.
-        """
-        
-        raise NotImplementedError(
-            "croston: not implemented. The class docstring specifies the "
-            "smoothing recursion, the seeding convention, and the n == 0, "
-            "n == 1 and q_hat == 0 guards."
-        )
-
-    def croston_sba(self, alpha: float = 0.1) -> pd.DataFrame:
-        """Syntetos-Boylan approximation of Croston.
-
-        Identical to :meth:`croston` except for the bias correction applied to
-        the final forecast::
-
-            yhat = (1 - alpha/2) * z_hat / q_hat
-
-        Plain Croston is positively biased on lumpy series, so SBA is the
-        more defensible choice on this panel. An SBA result that does not
-        outperform Croston indicates a defect in the Croston implementation.
-
-        Parameters
-        ----------
-        alpha : float
-            Smoothing weight, as in :meth:`croston`.
-        """
-        raise NotImplementedError(
-            "croston_sba: not implemented. Reuse the croston smoothing and "
-            "apply the (1 - alpha/2) correction to the final ratio."
-        )
-
-    def tsb(self, alpha: float = 0.1, beta: float = 0.1) -> pd.DataFrame:
-        """Teunter-Syntetos-Babai: Croston extended with demand obsolescence.
-
-        The distinguishing feature is a second smoothing weight applied to
-        demand probability, allowing the forecast to decay as a SKU
-        approaches discontinuation::
-
-            p_hat = beta * 1{sales_t > 0} + (1 - beta) * p_hat
-            yhat = p_hat * z_hat / q_hat
-
-        ``p_hat`` is updated on every period, including zero-sales periods,
-        while ``z_hat`` and ``q_hat`` update only on non-zero periods. That
-        asymmetry is the substance of the method.
-
-        Parameters
-        ----------
-        alpha : float
-            Smoothing weight for demand size and interval, as in
-            :meth:`croston`.
-        beta : float
-            Smoothing weight for demand probability. ``beta = 0`` reduces the
-            method to plain Croston, which provides a direct correctness
-            check on the implementation.
+        horizon : int
+            Number of periods to forecast. ``CrostonClassic`` forecasts a flat
+            per-period demand rate, so the result is constant across the horizon.
+            The backtest engine passes its configured ``horizon_days``.
 
         Notes
         -----
-        This is the only method in the module that responds to discontinued
-        demand. ``get_items_with_min_history`` in ``src/utils.py`` supports
-        constructing that case study.
+        ``CrostonClassic`` estimates the smoothing weight by minimising the
+        one-step SSE, so it exposes no ``alpha`` argument. A caller needing a
+        fixed weight must pass it through a different statsforecast model.
         """
-        raise NotImplementedError(
-            "tsb: not implemented. The class docstring specifies the p_hat "
-            "smoother and the beta = 0 equivalence check against croston."
-        )
+        return self._statsforecast_forecast(CrostonClassic(), horizon, "croston")
 
-    def theta(
-        self,
-        season_length: int = 7,
-        deseasonalize: bool = True,
-    ) -> pd.DataFrame:
-        """Theta method, the primary statistical baseline for this panel.
+    def croston_sba(self, horizon: int = 28) -> pd.DataFrame:
+        """Syntetos-Boylan approximation of Croston, via statsforecast's CrostonSBA.
 
-        Theta outperformed competing methods in the M3 and M4 forecasting
-        competitions and requires minimal tuning. It is the recommended
-        statistical reference point for evaluating the machine-learning
-        models.
-
-        Parameters
-        ----------
-        season_length : int
-            Period passed to ``ThetaModel``. Set to 1 with
-            ``deseasonalize=False`` where the training window cannot support
-            the requested period.
-        deseasonalize : bool
-            Whether the series is deseasonalised before the Theta components
-            are fitted.
-
-        Algorithm
-        ---------
-        Theta is the sum of a simple exponential smoothing of the original
-        series and half a simple exponential smoothing of the linearly
-        detrended series, with the drift contribution halved. Deseasonalisation
-        is performed internally when ``deseasonalize`` is True.
-
-        Panel-specific considerations
-        -----------------------------
-        - The method is univariate, so this entails one fit per item across
-          300 items. statsmodels raises on degenerate input; each fit must be
-          guarded independently and the failure count recorded. A high
-          failure rate read as poor performance is a defect, not a result.
-        - All-zero items admit no fit and require the same fallback as
-          :meth:`croston`.
-        - ``statsmodels`` 0.14.6 and
-          ``statsmodels.tsa.forecasting.theta.ThetaModel`` are available in
-          the project environment.
-
-        Validation
-        ----------
-        - Per-item fit failure count is reported.
-        - Output row count matches the test frame for every item.
-        - No negative values after forecasting.
+        Identical to :meth:`croston` except that the demand rate is multiplied by
+        ``(1 - alpha/2)``, which removes the positive bias the classic estimator
+        carries on intermittent series.
         """
-        raise NotImplementedError(
-            "theta: not implemented. The class docstring specifies the "
-            "per-item fit procedure, the required exception handling, and the "
-            "degenerate-series fallbacks."
-        )
-
-    def holt_winters(
-        self,
-        season_length: int = 7,
-        damped_trend: bool = True,
-    ) -> pd.DataFrame:
-        """Triple exponential smoothing (Holt-Winters) with additive seasonality.
-
-        Parameters
-        ----------
-        season_length : int
-            Number of periods in a seasonal cycle. The method requires at
-            least two complete cycles.
-        damped_trend : bool
-            Whether the trend component is damped. Damping is generally
-            preferable at this forecast horizon.
-
-        Panel-specific considerations
-        -----------------------------
-        - 93.3% of items are intermittent or erratic, a regime for which
-          Holt-Winters was not designed. Additive seasonality fitted to a
-          series that is 56% zero risks estimating a seasonal pattern from
-          noise. A shortfall relative to :meth:`croston` is the expected
-          result and should be reported as evidence that the method is
-          unsuited to intermittent demand, rather than as a ranking.
-        - Restricting the comparison to the smooth and lumpy demand classes
-          provides a more favourable setting if a fair-contest result is
-          required.
-        - Multiplicative seasonality is unusable on this panel, since it
-          divides by a seasonal factor that zeros render degenerate.
-        - As with :meth:`theta`, one fit is required per item, convergence
-          failures must be caught individually, and the count recorded.
-        - ``statsmodels`` 0.14.6 and
-          ``statsmodels.tsa.holtwinters.ExponentialSmoothing`` are available
-          in the project environment.
-
-        Validation
-        ----------
-        - Fit failure count is reported.
-        - No negative values after forecasting.
-        """
-        raise NotImplementedError(
-            "holt_winters: not implemented. The class docstring specifies the "
-            "model configuration, the minimum-cycle requirement, and the "
-            "expected behaviour on intermittent items."
-        )
-
-    # ==================================================================
-    # DISPATCH
-    # ==================================================================
+        return self._statsforecast_forecast(CrostonSBA(), horizon, "croston_sba")
 
     METHOD_NAMES = [
         "seasonal_naive",
@@ -511,25 +362,10 @@ class Baseline:
         "seasonal_moving_average",
         "croston",
         "croston_sba",
-        "tsb",
         "theta",
-        "holt_winters",
+        
     ]
 
-    def implemented(self) -> list[str]:
-        """Return the names of methods that are complete.
-
-        Detection inspects the method body for an explicit
-        ``raise NotImplementedError``. The docstrings are not a reliable
-        indicator, since unimplemented methods carry their specification
-        there.
-        """
-        out = []
-        for name in self.METHOD_NAMES:
-            source = inspect.getsource(getattr(self, name))
-            if "raise NotImplementedError" not in source:
-                out.append(name)
-        return out
 
     def run(self, method: str, **kwargs: Any) -> pd.DataFrame:
         """Invoke a baseline method by name.
@@ -559,7 +395,7 @@ class Baseline:
         return getattr(self, method)(**kwargs)
 
     # ==================================================================
-    # SHARED PLUMBING
+    # Basic Checks
     # ==================================================================
 
     def _check_inputs(self, train_df: pd.DataFrame, test_df: pd.DataFrame) -> None:
@@ -587,6 +423,7 @@ class Baseline:
         keep = [c for c in ("dept_id", "cat_id", "sales") if c in source.columns]
         if not keep:
             return pred_df
+   
         return pred_df.merge(
             source[["item_id", "date", *keep]].rename(columns={"sales": "real_sales"}),
             on=["item_id", "date"],
@@ -731,12 +568,83 @@ class Baseline:
             )
         return pred_df
 
+    
+    # def theta(
+    #     self,
+    #     season_length: int = 7,
+    #     deseasonalize: bool = True,
+    # ) -> pd.DataFrame:
+    #     """Theta method, the primary statistical baseline for this panel.
+
+    #     Theta outperformed competing methods in the M3 and M4 forecasting
+    #     competitions and requires minimal tuning. It is the recommended
+    #     statistical reference point for evaluating the machine-learning
+    #     models.
+
+    #     Parameters
+    #     ----------
+    #     season_length : int
+    #         Period passed to ``ThetaModel``. Set to 1 with
+    #         ``deseasonalize=False`` where the training window cannot support
+    #         the requested period.
+    #     deseasonalize : bool
+    #         Whether the series is deseasonalised before the Theta components
+    #         are fitted.
+
+    #     Algorithm
+    #     ---------
+    #     Theta is the sum of a simple exponential smoothing of the original
+    #     series and half a simple exponential smoothing of the linearly
+    #     detrended series, with the drift contribution halved. Deseasonalisation
+    #     is performed internally when ``deseasonalize`` is True.
+
+    #     Panel-specific considerations
+    #     -----------------------------
+    #     - The method is univariate, so this entails one fit per item across
+    #       300 items. statsmodels raises on degenerate input; each fit must be
+    #       guarded independently and the failure count recorded. A high
+    #       failure rate read as poor performance is a defect, not a result.
+    #     - All-zero items admit no fit and require the same fallback as
+    #       :meth:`croston`.
+    #     - ``statsmodels`` 0.14.6 and
+    #       ``statsmodels.tsa.forecasting.theta.ThetaModel`` are available in
+    #       the project environment.
+
+    #     Validation
+    #     ----------
+    #     - Per-item fit failure count is reported.
+    #     - Output row count matches the test frame for every item.
+    #     - No negative values after forecasting.
+    #     """
+    #     raise NotImplementedError(
+    #         "theta: not implemented. The class docstring specifies the "
+    #         "per-item fit procedure, the required exception handling, and the "
+    #         "degenerate-series fallbacks."
+    #     )
+
+    # DISPATCH
+    # ==========
+    # def implemented(self) -> list[str]:
+    #     """Return the names of methods that are complete.
+
+    #     Detection inspects the method body for an explicit
+    #     ``raise NotImplementedError``. The docstrings are not a reliable
+    #     indicator, since unimplemented methods carry their specification
+    #     there.
+    #     """
+    #     out = []
+    #     for name in self.METHOD_NAMES:
+    #         source = inspect.getsource(getattr(self, name))
+    #         if "raise NotImplementedError" not in source:
+    #             out.append(name)
+    #     return out
 
 
 # ======================================================================
 # Backward-compatible wrappers.
-# src/backtest_engine.py imports these at module scope. They are intended for
-# removal once the engine's if/elif dispatch is replaced by Baseline.run.
+# These predate the class and remain for any caller still importing the
+# functions. src/backtest_engine.py no longer does; it dispatches through
+# Baseline.run.
 # ======================================================================
 def seasonal_naive(
     train_df: pd.DataFrame, test_df: pd.DataFrame, lag_days: int = 28
