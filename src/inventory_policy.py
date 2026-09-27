@@ -10,6 +10,7 @@
 import pandas as pd 
 import numpy as np 
 import logging 
+from scipy.stats import norm
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class InventoryPolicy:
         review_period: int = 7,
         daily_unit_holding_cost: float = 0.2,
         stockout_cost: float = 1.0,
-        
+        oos_error_list: list | None = None,
     ):
         self.forecasts_df = forecasts.copy()
         self.forecasts_df['date'] = pd.to_datetime(self.forecasts_df['date'])
@@ -42,10 +43,11 @@ class InventoryPolicy:
         if inventory is None:
             raise ValueError("Inventory not initialized.")
 
-        # if not oos_error_list:
-        #     raise ValueError("Out Of Sample Error not initialized.")
-
-        self.oos_errors = [] # initialize a oos_error list
+        # Seed the out-of-sample error history. Normally populated by
+        # update_oos_errors() as reviews are simulated; an initial value can be
+        # supplied so the very first safety-stock calculation is well defined
+        # rather than reading an empty list.
+        self.oos_errors: list = list(oos_error_list) if oos_error_list else []
 
         # Align index type to string
         self.on_hand = inventory.copy()
@@ -53,15 +55,54 @@ class InventoryPolicy:
         self.transit_pipeline: list[tuple[pd.Timestamp, pd.Series]] = []  
         self.simulation_logs = []   
 
-    def _safety_stock(self) -> pd.Series:
-        z_score = 0.97 # for 83.33% service level
-        latest_error = self.oos_errors[-1]
-        
-        if isinstance(latest_error, pd.DataFrame):
-            latest_error = latest_error.set_index("item_id")["rmse_tau"]
-            
-        latest_error.index = latest_error.index.astype(str)
-        return z_score * latest_error * np.sqrt(self.risk_period)
+    def _safety_stock(self, current_forecasts: pd.DataFrame | None = None, type: str = "rmse") -> pd.Series:
+        """Calculates per-item safety stock levels returning a pd.Series indexed by item_id.
+
+        ``current_forecasts`` is only consulted by the ``quantile`` path; the
+        default ``rmse`` path derives everything from the out-of-sample error
+        history, so it does not require the caller to have a forecast slice handy.
+        """
+        if type == "rmse":
+            # Parametric approach using tau-day rolling RMSE.
+            # The service level is the one the cost inputs actually imply:
+            #   target = h / (h + p)  ->  z = Phi^-1(target)
+            # Deriving z from the inputs instead of hardcoding it means changing
+            # the holding/stockout cost ratio moves safety stock with it. The
+            # previous z=0.97 (~83.3% service) ignored target_service_level
+            # entirely and left roughly 47% of the cost-optimal buffer unheld.
+            z_score = float(norm.ppf(self.target_service_level))
+            latest_error = self.oos_errors[-1]
+
+            if isinstance(latest_error, pd.DataFrame):
+                latest_error = latest_error.set_index("item_id")["rmse_tau"]
+
+            latest_error.index = latest_error.index.astype(str)
+            ss = z_score * latest_error
+
+        elif type == "quantile":
+            # Empirical approach: (Sum of tau-day quantile forecast) - (Sum of tau-day mean forecast)
+            # Slices forecasted_demand over the risk period (horizon tau)
+            if current_forecasts is None:
+                raise ValueError(
+                    "the quantile safety-stock path needs current_forecasts; "
+                    "pass a forecast slice or use type='rmse'."
+                )
+            df_horizon = current_forecasts.copy()
+            df_horizon["item_id"] = df_horizon["item_id"].astype(str)
+
+            # Aggregate total expected demand and high-service quantile demand over the lead time window
+            grouped = df_horizon.groupby("item_id", observed=True)
+            cum_q83 = grouped["q83_33"].sum()
+            cum_mean = grouped["sales_pred"].sum()
+
+            # Buffer is the spread between target percentile and point estimate
+            ss = cum_q83 - cum_mean
+
+        else:
+            raise ValueError(f"Unknown safety stock calculation type: {type}")
+
+        # Safety stock cannot be negative
+        return ss.clip(lower=0.0)
 
     def update_oos_errors(self, forecasts_prior_review_date: pd.DataFrame):
         rolling_error_df = compute_rolling_tau_error(forecasts=forecasts_prior_review_date, tau=self.risk_period)
@@ -78,7 +119,7 @@ class InventoryPolicy:
         forecasted_risk_period['item_id'] = forecasted_risk_period['item_id'].astype(str)
         risk_demand_item = forecasted_risk_period.groupby("item_id", observed=True)["sales_pred"].sum()
 
-        safety_stock = self._safety_stock()
+        safety_stock = self._safety_stock(current_forecasts=forecasted_risk_period)
         order_up_to = risk_demand_item.add(safety_stock, fill_value=0.0)
 
         inventory_position = (
@@ -111,9 +152,10 @@ class InventoryPolicy:
             self, 
             actual_sales: pd.DataFrame, 
             forecasted_demand: pd.DataFrame,
-            model_name:str,
-            forecast_type:str,
-            store_id:str='CA_1') -> pd.DataFrame:
+            model_name: str = "unspecified",
+            forecast_type: str = "mean",
+            store_id: str = "CA_1",
+    ) -> pd.DataFrame:
         actual_sales = actual_sales.copy()
         forecasted_demand = forecasted_demand.copy()
         
@@ -186,7 +228,7 @@ class InventoryPolicy:
                 'on_hand': self.on_hand.values,
                 'arriving_qty': arriving_qty.reindex(self.on_hand.index, fill_value=0.0).values,
                 'actual_sales': sales_on_day.values,
-                'safety_stock': self._safety_stock(),
+                'safety_stock': self._safety_stock(current_forecasts=forecasted_demand),
                 'lost_sales': lost_sales.values,
                 'order_qty': order_qty.reindex(self.on_hand.index, fill_value=0.0).values,
                 'order_up_to': order_up_to.reindex(self.on_hand.index, fill_value=0.0).values,
@@ -206,8 +248,8 @@ def compute_rolling_tau_error(forecasts: pd.DataFrame, tau: int) -> pd.DataFrame
     df = df.sort_values(['item_id', 'date'])
     
     g = df.groupby('item_id', observed=True)
-    df['_rolled_actual'] = g['sales'].transform(lambda x: x.rolling(tau, min_periods=1).sum())
-    df['_rolled_forecast'] = g['sales_pred'].transform(lambda x: x.rolling(tau, min_periods=1).sum())
+    df['_rolled_actual'] = g['sales'].transform(lambda x: x.rolling(tau, min_periods=tau).sum())
+    df['_rolled_forecast'] = g['sales_pred'].transform(lambda x: x.rolling(tau, min_periods=tau).sum())
 
     df['cum_error'] = df['_rolled_actual'] - df['_rolled_forecast']
     return df.drop(columns=['_rolled_actual', '_rolled_forecast'])
