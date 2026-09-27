@@ -14,7 +14,7 @@ data/
 *.pkl
 *.joblib
 models/
-
+results/
 # --- Logs & Temporary Files ---
 *.log
 CACHED
@@ -23,3 +23,5 @@ resolving
 transferring
 writing
 naming
+
+implementation_review.html

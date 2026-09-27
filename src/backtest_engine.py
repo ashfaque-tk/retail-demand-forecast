@@ -120,7 +120,7 @@ class BacktestEngine:
         List of categorical column names (e.g., ['item_id', 'cat_id', 'dept_id']).
     feature_names : list[str] | None, optional
         Ordered list of feature column names used for training and inference.
-    lead_time_days : int, default 11
+    lead_time_days : int, default 4
         Supplier replenishment lead time in days.
     review_period_days : int, default 7
         Inventory review / reorder cycle period in days.
@@ -165,7 +165,8 @@ class BacktestEngine:
         use_log_transform: bool = False,
         baselines : Sequence[str] | Mapping[str, dict[str, Any]] | None = None,
         fva_reference : str | None = None,
-        baseline_quantiles : tuple[float, ...] | None = None,
+        baseline_quantiles : list[float] | None = None,
+        safety_stock_policy : str = 'rmse',
     ) -> None:
         self.model_name = model_name
         self.forecast_type = forecast_type.lower()
@@ -173,7 +174,7 @@ class BacktestEngine:
         self.horizon_days = horizon_days
         self.backtest_mode = backtest_mode
         self.step_size_days = step_size_days
-        self.categorical_cols = categorical_cols or ["item_id", "cat_id", "dept_id"]
+        self.categorical_cols = categorical_cols or ["item_id",  "dept_id"]
         self.feature_names = feature_names or []
         self.lead_time_days = lead_time_days
         self.review_period_days = review_period_days
@@ -183,6 +184,18 @@ class BacktestEngine:
         self.use_log_transform = use_log_transform
         self.stockout_rate = stockout_rate
         self.baseline_quantiles = baseline_quantiles
+        if safety_stock_policy not in ("rmse", "quantile"):
+            raise ValueError(
+                f"safety_stock_policy must be 'rmse' or 'quantile', "
+                f"got {safety_stock_policy!r}"
+            )
+        if safety_stock_policy == "quantile" and not baseline_quantiles:
+            raise ValueError(
+                "safety_stock_policy='quantile' needs quantile levels. Set "
+                "PIPELINE_CONFIG['quantiles'] (config.critical_quantile(holding) "
+                "supplies the cost-implied one) or pass --quantiles."
+            )
+        self.safety_stock_policy = safety_stock_policy
         # Review period + lead time total risk horizon (tau)
         self.tau_days = self.lead_time_days + self.review_period_days
 
@@ -202,11 +215,10 @@ class BacktestEngine:
 
         # Core pipeline components
         self.feature_builder = FeatureBuilder()
-        quantiles = PIPELINE_CONFIG.get("quantiles") or None # returns a list of quantiles that we want find
 
         self.model = SelectModel(
             model=self.model_name,
-            quantiles= quantiles,
+            quantiles= self.baseline_quantiles,
             use_log_transform=self.use_log_transform,
             categorical_cols=self.categorical_cols,
         )
@@ -272,6 +284,10 @@ class BacktestEngine:
         self.inventory: dict[str, Optional[InventoryPolicy]] = {name: None for name in self.tracked_models}
         ### initlize a similar one for  storing actuals and preds
         self.actuals_preds: dict[str, pd.DataFrame] = {name: pd.DataFrame() for name in self.tracked_models}
+
+    def _get_feature_importance(self):
+        return pd.Series(self.model.model_point.feature_importances_,index=self.model.features).sort_values(ascending=False)
+
 
     def reset_state(self) -> None:
         """Clears accumulated out-of-sample errors, predictions and cached window results."""
@@ -436,6 +452,10 @@ class BacktestEngine:
             quit()
         # if window 0: we need forecast for a prior horizon for rmse_error in inventory calculations
         # we split the train_wnd to calibration_train, calibration_eval
+        profile = self.feature_builder.build_sku_demand_profile(train_wnd)
+        train_wnd = train_wnd.merge(profile,on='item_id',how='left')
+        eval_wnd = eval_wnd.merge(profile,on='item_id',how='left')
+        
         if window_id == 0:
             logger.debug(f'using calibration set for window_id=0')
             # build the price feature set on full train data 
@@ -488,6 +508,7 @@ class BacktestEngine:
                 review_period=self.review_period_days,
                 daily_unit_holding_cost=self.holding_cost_rate,
                 stockout_cost=self.stockout_rate,
+                safety_stock_type=self.safety_stock_policy
             )
 
             self.inventory[short_name] = policy

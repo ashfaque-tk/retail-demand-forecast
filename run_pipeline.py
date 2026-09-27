@@ -1,7 +1,8 @@
 """Production Pipeline Runner for Model-Agnostic Demand Forecasting & Inventory Optimization.
 
 Workflow:
-    1. Load and validate curated data + final feature set.
+I. uv run_pipeline.py --mode backtest --model lgbm --
+    1. Load and validate curated data + final test set and unknon future dataset (to simulate production setup)
     2. Execute walk-forward validation windows via BacktestEngine (ML + Baselines).
     3. Evaluate periodic replenishment inventory policies across out-of-sample errors.
     4. Log experiment records to JSON and print executive performance tables.
@@ -79,7 +80,7 @@ def parse_cli_args() -> argparse.Namespace:
         "--backtest-windows",
         type = int,
         dest = 'backtest_windows',
-        default=10,
+        default=1, #debug mode
         help = "Number of backtest windows to be run (default 1 for debug)")
 
     # Persistence Options
@@ -92,7 +93,28 @@ def parse_cli_args() -> argparse.Namespace:
         help="Storage option for forecasts and inventory logs ('parquet', 'db', or 'none').",
     )
 
+    parser.add_argument(
+        "--quantiles",
+        type= float,
+        nargs="+",
+        dest='quantile_list',
+        default= None,
+        help = "Quantiles for safety stock calculations"
+    )
+
+    parser.add_argument(
+        "--safety-stock-policy",
+        type=str,
+        dest='safety_stock_policy',
+        choices=["rmse", "quantile"],
+        default=None,
+        help="How safety stock is sized: 'rmse' (z * RMSE_tau) or "
+             "'quantile' (empirical spread at the cost-implied alpha). "
+             "Defaults to PIPELINE_CONFIG['safety_stock_policy']."
+    )
+
     return parser.parse_args()
+
 
 def build_engine(feature_names: list[str]) -> BacktestEngine:
     """Constructs BacktestEngine directly from the unified PIPELINE_CONFIG."""
@@ -109,6 +131,9 @@ def build_engine(feature_names: list[str]) -> BacktestEngine:
         review_period_days=PIPELINE_CONFIG["review_period"],
         holding_cost_rate=PIPELINE_CONFIG["holding_cost_rate"],
         max_windows=PIPELINE_CONFIG.get("max_windows"),
+        baseline_quantiles=PIPELINE_CONFIG.get("quantiles"),
+        safety_stock_policy=PIPELINE_CONFIG.get("safety_stock_policy", "rmse"),
+        stockout_rate=PIPELINE_CONFIG.get("stockout_cost_rate", 1.0),
         use_log_transform=PIPELINE_CONFIG.get("use_log_transform", True),
     )
 
@@ -174,9 +199,19 @@ def main():
     PIPELINE_CONFIG["forecast_type"] = args.forecast_type 
     PIPELINE_CONFIG["training_window"] = args.training_window
     PIPELINE_CONFIG['max_windows'] = args.backtest_windows 
-
-
-
+    # Only override the cost-derived default when the CLI actually supplies levels.
+    # Assigning unconditionally would replace config's newsvendor fractile with
+    # None on a plain run, silently disabling quantile output.
+    if args.quantile_list:
+        PIPELINE_CONFIG['quantiles'] = args.quantile_list
+    else:
+        logger.info("No --quantiles given; using cost-derived levels: %s",
+                    PIPELINE_CONFIG['quantiles'])
+    if args.safety_stock_policy:
+        PIPELINE_CONFIG['safety_stock_policy'] = args.safety_stock_policy
+    logger.info("Safety stock policy: %s | quantiles: %s",
+                PIPELINE_CONFIG['safety_stock_policy'], PIPELINE_CONFIG['quantiles'])
+  
     logger.info(
         "Executing Pipeline: Mode='%s' | Model='%s' | Type='%s' | Backtest Windows= '%d'",
         PIPELINE_CONFIG["mode"],
@@ -201,11 +236,12 @@ def main():
 
     # 2. Build feature schema from a small sample
     feat_builder = FeatureBuilder()
+
     sample_df = train_df[train_df["item_id"] == train_df["item_id"].iloc[0]].tail(150)
     _, full_features = feat_builder.build(sample_df)
-    
+    full_features +=[c for c in feat_builder.build_sku_demand_profile(sample_df).columns if c !='item_id']
     logger.info("Total features: %d feature columns: %s", len(full_features),full_features)
-
+    # quit()
     # 3. Build Engine with dynamic feature names
     engine = build_engine(full_features)
 
@@ -247,12 +283,13 @@ def main():
                     review_period=review_period,
                     model_type=type,
                     train_years=training_yr,
-                    eval_mode='test')
+                    eval_mode='test',
+                    policy_type=args.safety_stock_policy)
 
         logger.info(f"Winning Model on Test Set: {winner}. Deploy ")
-        
+
         print(f'champion model is {winner}, inventory: {test_inventory[winner]}')
-        
+        print(test_preds['lgbm'])
         ### winning_model preds and inventory will be uploaded to dB, and also saved to parquet
         save_to_parquet(models_data=test_preds,filename=f'test_preds-{model}-{type}-{timestamp_str}.parquet')
         save_to_parquet(models_data=test_inventory,filename=f'test_inventory-{model}-{type}-{timestamp_str}.parquet')
@@ -271,7 +308,8 @@ def main():
 
         logger.info("[2/3] Executing walk-forward backtesting (mode=%s)...", PIPELINE_CONFIG["backtest_mode"])
         metrics_df, fva_df, window_results = engine.run_all(full_data=train_df)
-        
+        print(window_results[0].model_predictions['lgbm'])
+        print(window_results[0].model_predictions['seasonal_naive'])
         # Save experiment records
         record = {
             "timestamp": datetime.now().isoformat(),
@@ -284,8 +322,13 @@ def main():
         print(f"####### BACKTEST METRICS #######")
         print(metrics_df,'\n' )
         print(f'####### BACKTEST FVA_RESULTS ########')
-        print(fva_df)
-  
+        print(fva_df,'\n')
+        print(f'####### inventory######')
+        print(window_results[0].inventory_policy['lgbm'])
+
+        # feature importances: 
+        feature_importance = engine._get_feature_importance()
+
         # generate html report 
         # log experimental raw data
         log_experiment_results(RESULTS_DIR / f"expts/backtest_expt_{model}_{type}_{training_yr}yr_{timestamp_str}.json", record)
@@ -294,7 +337,10 @@ def main():
                                         output_path=report_out,lead_time=lead_time,
                                         review_period=review_period,
                                         model_type=type,
-                                        train_years=training_yr)
+                                        train_years=training_yr,
+                                        feature_importances=feature_importance,
+                                        policy_type=args.safety_stock_policy)
+        
         return metrics_df, fva_df, window_results
 
     elif run_mode == 'deploy':

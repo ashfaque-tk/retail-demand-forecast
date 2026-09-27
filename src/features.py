@@ -19,14 +19,15 @@ from typing import Any,Set
 import time 
 
 class FeatureBuilder():
-
+    ADI_THRESHOLD = 1.32
+    CV2_THRESHOLD = .49
     def __init__(
         self, 
         lags: list[int] = [7, 28, 60, 90],
         rolling_means: list[int] = [7, 28, 60, 90],
         rolling_maxs: list[int] = [7, 28, 60, 90],
         rolling_on_lags: dict[int, list[int]] = {28: [7, 28]},
-        exclude_feats: list = [],# empty default list
+        exclude_feats: list = [],# empty default list CAUTION: 'cat_id','item_id','dept_id' shoud not be removed
         col_names: dict = {
             'item_col': 'item_id', 'dept_col': 'dept_id', 'cat_col': 'cat_id',
             'store_col': 'store_id', 'state_col': 'state_id', 'price_col': 'sell_price',
@@ -41,12 +42,12 @@ class FeatureBuilder():
         # Base metadata columns that should NEVER be used as model inputs
         # any cols with direct relation with target like revenue, should also be removed
         # otherwise, code will run but with faulty predictions.
-        self.excluded_metadata = exclude_feats + [
+        self.excluded_metadata =  [
             'id', 'weekday', 'date', 'sales', 'revenue','origin_date', 'target_date', 'target_sales',
             'd', 'wm_yr_wk', 'event_name_1', 'event_name_2', 'event_type_1', 'event_type_2',
             'store_id', 'state_id','snap_TX','snap_WI'
-        ]
-
+        ] + exclude_feats
+       
         self.id_col = col_names['item_col']
         self.date_col = col_names['date_col']
         self.dept_col = col_names['dept_col']
@@ -70,6 +71,55 @@ class FeatureBuilder():
         if missing:
             raise ValueError(f"{df_name} missing required columns: {missing}")
 
+    
+    # ---- Intermittent, lumpy, erratic sku profile -------
+    def build_sku_demand_profile(self,df:pd.DataFrame)->pd.DataFrame:
+        '''one row per item-id:ADI, modified ADI, CV^2, lumpiness , pattern class.
+        Must be called on the  train slice only (before eval sales exist)'''
+
+        grp = df.groupby(self.id_col,observed=True)[self.target_col]
+        prof = grp.agg(sku_obs_days='count',sku_mean_demand='mean')
+        nz = df[self.target_col].gt(0)
+        nz_grp = [df[self.id_col]]
+
+        nz_cnt = nz.groupby(nz_grp,observed=True).sum()
+        nz_sum = df[self.target_col].where(nz).groupby(nz_grp,observed=True).sum()
+        nz_sq = df[self.target_col].pow(2).where(nz).groupby(nz_grp,observed=True).sum()
+
+        prof['sku_nonzero_days'] = nz_cnt
+        prof['sku_zero_days'] = prof['sku_obs_days']- nz_cnt
+        prof['sku_active_rate'] = nz_cnt/prof['sku_obs_days']
+
+        # ADI = mean number of days between two non-zero demand periods
+        adi  = prof['sku_obs_days']/nz_cnt.replace(0,np.nan)
+        prof['sku_adi'] = adi 
+        prof['sku_adida'] = adi.pow(2)/(adi+1)#small-sample corrected ADI 
+
+        # CV^2 over the non-zero demand sizes only (lumpiness of size, not of timing)
+        nz_mean = nz_sum/nz_cnt.replace(0,np.nan)
+        nz_var = (nz_sq/nz_cnt) - nz_mean.pow(2)
+        prof['sku_cv2'] = (nz_var/nz_mean.pow(2)).clip(lower=0)
+
+        #  Syntetos-Boylan lumpiness index , p=sqrt(ADI)
+        prof['sku_lumpiness'] = prof['sku_cv2']*prof['sku_adi'].pow(0.5)
+
+        # longest run of consecutive zero -demand days
+        z = (~nz).astype('int8')
+        run_id = z.groupby(nz_grp,observed=True).cumsum()
+        zero_run = z.groupby(nz_grp+[run_id],observed=True).transform('sum')
+
+        prof['sku_max_zero_run'] = zero_run.groupby(nz_grp,observed=True).max()
+
+        # 0 smooth, 1 lumpy, 2 intermittent, 3 erratic 
+        smooth = (prof['sku_adi'] < self.ADI_THRESHOLD) & (prof['sku_cv2']<self.CV2_THRESHOLD)
+        lumpy = (prof['sku_adi'] < self.ADI_THRESHOLD) & (prof['sku_cv2']>=self.CV2_THRESHOLD)
+        inter = (prof['sku_adi'] >= self.ADI_THRESHOLD) & (prof['sku_cv2']<self.CV2_THRESHOLD)
+
+        prof['sku_pattern'] = np.select([smooth,lumpy,inter],[0,1,2],default=3)
+        prof['sku_is_lumpy'] = lumpy.astype('int8')
+        prof['sku_is_erratic'] = (~smooth & ~lumpy & ~inter).astype('int8')
+
+        return prof.reset_index()
     # ---------- unified lags & rolling features ----------
     def add_lags_and_rollings(
         self,

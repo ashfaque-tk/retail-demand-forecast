@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     order_qty NUMERIC(12,4) NOT NULL DEFAULT 0.00,
     order_up_to NUMERIC(12,4) NOT NULL DEFAULT 0.00,
     safety_stock NUMERIC(12,4) NOT NULL DEFAULT 0.00,
-    -- Realized outcomes
+        -- Realized outcomes
     holding_cost NUMERIC(12,4) NOT NULL DEFAULT 0.00,
 
     -- Policy inputs

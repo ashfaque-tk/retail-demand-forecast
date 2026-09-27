@@ -70,7 +70,7 @@ class Baseline:
         self,
         train_df: pd.DataFrame,
         test_df: pd.DataFrame,
-        quantiles: tuple[float, ...] | None = None,
+        quantiles: list[float] | None = None,
     ) -> None:
         self._check_inputs(train_df, test_df)
 
@@ -103,7 +103,7 @@ class Baseline:
             )
 
     def _check_quantiles(
-        self, quantiles: tuple[float, ...] | None
+        self, quantiles: list[float] | None
     ) -> tuple[float, ...] | None:
         """Validate requested quantile levels. ``None`` disables quantile output."""
         if quantiles is None:
@@ -569,90 +569,3 @@ class Baseline:
         return pred_df
 
     
-    # def theta(
-    #     self,
-    #     season_length: int = 7,
-    #     deseasonalize: bool = True,
-    # ) -> pd.DataFrame:
-    #     """Theta method, the primary statistical baseline for this panel.
-
-    #     Theta outperformed competing methods in the M3 and M4 forecasting
-    #     competitions and requires minimal tuning. It is the recommended
-    #     statistical reference point for evaluating the machine-learning
-    #     models.
-
-    #     Parameters
-    #     ----------
-    #     season_length : int
-    #         Period passed to ``ThetaModel``. Set to 1 with
-    #         ``deseasonalize=False`` where the training window cannot support
-    #         the requested period.
-    #     deseasonalize : bool
-    #         Whether the series is deseasonalised before the Theta components
-    #         are fitted.
-
-    #     Algorithm
-    #     ---------
-    #     Theta is the sum of a simple exponential smoothing of the original
-    #     series and half a simple exponential smoothing of the linearly
-    #     detrended series, with the drift contribution halved. Deseasonalisation
-    #     is performed internally when ``deseasonalize`` is True.
-
-    #     Panel-specific considerations
-    #     -----------------------------
-    #     - The method is univariate, so this entails one fit per item across
-    #       300 items. statsmodels raises on degenerate input; each fit must be
-    #       guarded independently and the failure count recorded. A high
-    #       failure rate read as poor performance is a defect, not a result.
-    #     - All-zero items admit no fit and require the same fallback as
-    #       :meth:`croston`.
-    #     - ``statsmodels`` 0.14.6 and
-    #       ``statsmodels.tsa.forecasting.theta.ThetaModel`` are available in
-    #       the project environment.
-
-    #     Validation
-    #     ----------
-    #     - Per-item fit failure count is reported.
-    #     - Output row count matches the test frame for every item.
-    #     - No negative values after forecasting.
-    #     """
-    #     raise NotImplementedError(
-    #         "theta: not implemented. The class docstring specifies the "
-    #         "per-item fit procedure, the required exception handling, and the "
-    #         "degenerate-series fallbacks."
-    #     )
-
-    # DISPATCH
-    # ==========
-    # def implemented(self) -> list[str]:
-    #     """Return the names of methods that are complete.
-
-    #     Detection inspects the method body for an explicit
-    #     ``raise NotImplementedError``. The docstrings are not a reliable
-    #     indicator, since unimplemented methods carry their specification
-    #     there.
-    #     """
-    #     out = []
-    #     for name in self.METHOD_NAMES:
-    #         source = inspect.getsource(getattr(self, name))
-    #         if "raise NotImplementedError" not in source:
-    #             out.append(name)
-    #     return out
-
-
-# ======================================================================
-# Backward-compatible wrappers.
-# These predate the class and remain for any caller still importing the
-# functions. src/backtest_engine.py no longer does; it dispatches through
-# Baseline.run.
-# ======================================================================
-def seasonal_naive(
-    train_df: pd.DataFrame, test_df: pd.DataFrame, lag_days: int = 28
-) -> pd.DataFrame:
-    return Baseline(train_df, test_df).seasonal_naive(lag_days=lag_days)
-
-
-def simple_moving_average(
-    train_df: pd.DataFrame, test_df: pd.DataFrame, window_days: int = 180
-) -> pd.DataFrame:
-    return Baseline(train_df, test_df).simple_moving_average(window_days=window_days)

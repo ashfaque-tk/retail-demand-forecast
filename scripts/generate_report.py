@@ -2,6 +2,11 @@ from pathlib import Path
 from typing import Any, Optional, Union
 import pandas as pd
 import jinja2
+import io
+import base64
+import matplotlib
+matplotlib.use("Agg")  # Non-interactive backend for server-side rendering
+import matplotlib.pyplot as plt
 
 import config
 
@@ -25,16 +30,18 @@ HTML_TEMPLATE = """
             background-color: var(--bg);
             color: var(--text-main);
             margin: 0;
-            padding: 40px 20px;
+            padding: 30px 20px;
         }
         .container {
-            max-width: 900px;
+            max-width: 1280px;
+            width: 95%;
             margin: 0 auto;
             background: var(--card-bg);
             border-radius: 12px;
             border: 1px solid var(--border);
             box-shadow: 0 4px 12px rgba(0,0,0,0.03);
-            padding: 36px;
+            padding: 32px;
+            box-sizing: border-box;
         }
         .header-title { font-size: 1.6rem; font-weight: 700; color: var(--primary); margin: 0 0 6px 0; }
         .meta-subtitle { font-size: 0.88rem; color: var(--text-muted); margin-bottom: 24px; line-height: 1.5; }
@@ -72,11 +79,44 @@ HTML_TEMPLATE = """
             font-size: 1.1rem; font-weight: 600; color: var(--primary);
             margin: 28px 0 12px 0; padding-bottom: 6px; border-bottom: 1px solid var(--border);
         }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.92rem; }
-        th, td { padding: 10px 14px; text-align: right; border-bottom: 1px solid var(--border); }
-        th { background-color: #f8fafc; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+        
+        .table-wrapper {
+            width: 100%;
+            overflow-x: auto;
+            margin-top: 10px;
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            font-size: 0.85rem; 
+            table-layout: auto;
+        }
+        th, td { 
+            padding: 10px 12px; 
+            text-align: right; 
+            border-bottom: 1px solid var(--border); 
+            white-space: nowrap;
+        }
+        th { 
+            background-color: #f8fafc; 
+            color: var(--text-muted); 
+            font-weight: 600; 
+            text-transform: uppercase; 
+            font-size: 0.72rem; 
+        }
         td:first-child, th:first-child { text-align: left; }
         tr:hover { background-color: #f1f5f9; }
+
+        .plot-container {
+            text-align: center;
+            margin-top: 16px;
+        }
+        .plot-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
     </style>
 </head>
 <body>
@@ -118,14 +158,57 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="section-title">Mean Metrics Across {{ num_windows }} Window/Split</div>
-        {{ avg_metrics_table }}
+        <div class="table-wrapper">
+            {{ avg_metrics_table }}
+        </div>
 
         <div class="section-title">Mean Forecast Value Added (FVA %) Across {{ num_windows }} Window/Split</div>
-        {{ avg_fva_table }}
+        <div class="table-wrapper">
+            {{ avg_fva_table }}
+        </div>
+
+        {% if fi_plot_base64 %}
+        <div class="section-title">Feature Importances (Top Features)</div>
+        <div class="plot-container">
+            <img src="data:image/png;base64,{{ fi_plot_base64 }}" alt="Feature Importances Plot" />
+        </div>
+        {% endif %}
     </div>
 </body>
 </html>
 """
+
+def _generate_fi_plot_base64(feature_importances: Union[pd.Series, pd.DataFrame], top_n: int = 50) -> str:
+    """Helper to convert feature importances into a base64 encoded PNG chart."""
+    if isinstance(feature_importances, pd.DataFrame):
+        # Assume columns like ['feature', 'importance'] or taking first numerical column
+        if "feature" in feature_importances.columns and "importance" in feature_importances.columns:
+            fi_series = feature_importances.set_index("feature")["importance"]
+        else:
+            fi_series = feature_importances.iloc[:, 0]
+    else:
+        fi_series = feature_importances
+
+    fi_series = fi_series.sort_values(ascending=True).tail(top_n)
+
+    fig, ax = plt.subplots(figsize=(10, max(4, len(fi_series) * 0.35)))
+    bars = ax.barh(fi_series.index, fi_series.values, color="#2563eb", edgecolor="none")#type:ignore
+    
+    ax.set_title(f"Top {len(fi_series)} Feature Importances", fontsize=12, fontweight="bold", pad=12)
+    ax.set_xlabel("Importance Score", fontsize=10)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#cbd5e1")
+    ax.spines["bottom"].set_color("#cbd5e1")
+    ax.tick_params(axis="both", which="major", labelsize=9)
+    plt.tight_layout()
+
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buffer.seek(0)
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
 
 def generate_experiment_html_report(
     metrics_df: pd.DataFrame,
@@ -138,6 +221,7 @@ def generate_experiment_html_report(
     model_type: Optional[str] = None,
     train_years: Optional[Union[str, int]] = None,
     eval_mode: str = "backtest",  # Accepts "test", or "backtest"
+    feature_importances: Optional[Union[pd.Series, pd.DataFrame]] = None,
 ) -> str:
     """
     Vectorized summary generator: averages window metrics and existing FVA dataframes directly.
@@ -161,6 +245,11 @@ def generate_experiment_html_report(
         )
     else:
         avg_fva_df = fva_df.copy()
+
+    # Drop self-comparison columns (e.g. FVA_SEASONAL_NAIVE_VS_SEASONAL_NAIVE)
+    self_fva_cols = [c for c in avg_fva_df.columns if c.startswith("FVA_") and c.rsplit("_VS_", 1)[0].replace("FVA_", "") == c.rsplit("_VS_", 1)[-1]]
+    if self_fva_cols:
+        avg_fva_df = avg_fva_df.drop(columns=self_fva_cols)
 
     # 2. Dynamic Title & Mode Resolution
     resolved_model_name: str = (
@@ -237,7 +326,12 @@ def generate_experiment_html_report(
                 lambda x: fmt.format(x) if pd.notna(x) else "-"
             )
 
-    # 6. Render HTML
+    # 6. Render Feature Importance Plot (if provided)
+    fi_plot_base64 = None
+    if feature_importances is not None and len(feature_importances) > 0:
+        fi_plot_base64 = _generate_fi_plot_base64(feature_importances)
+
+    # 7. Render HTML
     template = jinja2.Template(HTML_TEMPLATE)
     html_out: str = template.render(
         title_str=title_str,
@@ -252,7 +346,8 @@ def generate_experiment_html_report(
         cand_cost_str=cand_cost_str,
         baseline_savings=baseline_savings,
         avg_metrics_table=avg_metrics_rendered.to_html(index=False, classes="table", border=0),
-        avg_fva_table=avg_fva_df.round(2).to_html(index=False, classes="table", border=0)
+        avg_fva_table=avg_fva_df.round(2).to_html(index=False, classes="table", border=0),
+        fi_plot_base64=fi_plot_base64,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

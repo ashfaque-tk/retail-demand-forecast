@@ -26,6 +26,7 @@ class InventoryPolicy:
         review_period: int = 7,
         daily_unit_holding_cost: float = 0.2,
         stockout_cost: float = 1.0,
+        safety_stock_type: str = 'rmse',
         oos_error_list: list | None = None,
     ):
         self.forecasts_df = forecasts.copy()
@@ -39,7 +40,7 @@ class InventoryPolicy:
         self.daily_unit_holding_cost = daily_unit_holding_cost 
         self.stockout_penalty = stockout_cost
         self.target_service_level = 1 / (1 + (daily_unit_holding_cost / stockout_cost))
-
+        self.safety_stock_type  = safety_stock_type
         if inventory is None:
             raise ValueError("Inventory not initialized.")
 
@@ -53,23 +54,32 @@ class InventoryPolicy:
         self.on_hand = inventory.copy()
         self.on_hand.index = self.on_hand.index.astype(str)
         self.transit_pipeline: list[tuple[pd.Timestamp, pd.Series]] = []  
-        self.simulation_logs = []   
+        self.simulation_logs = []  
 
-    def _safety_stock(self, current_forecasts: pd.DataFrame | None = None, type: str = "rmse") -> pd.Series:
+    @property
+    def service_quantile_column(self) -> str:
+        """Forecast column holding the cost-implied service quantile ('q83' at h=0.2).
+
+        Named the same way ``baselines`` names its columns -- ``q`` plus
+        ``int(level * 100)`` -- so both paths agree on the spelling.
+        """
+        return f"q{int(self.target_service_level * 100)}"
+
+    def _safety_stock(self, current_forecasts: pd.DataFrame | None = None) -> pd.Series:
         """Calculates per-item safety stock levels returning a pd.Series indexed by item_id.
 
         ``current_forecasts`` is only consulted by the ``quantile`` path; the
         default ``rmse`` path derives everything from the out-of-sample error
         history, so it does not require the caller to have a forecast slice handy.
         """
-        if type == "rmse":
+        if self.safety_stock_type == "rmse":
             # Parametric approach using tau-day rolling RMSE.
             # The service level is the one the cost inputs actually imply:
-            #   target = h / (h + p)  ->  z = Phi^-1(target)
+            #   target = p / (p + h)  ->  z = Phi^-1(target)
             # Deriving z from the inputs instead of hardcoding it means changing
             # the holding/stockout cost ratio moves safety stock with it. The
-            # previous z=0.97 (~83.3% service) ignored target_service_level
-            # entirely and left roughly 47% of the cost-optimal buffer unheld.
+            # previous z=0.97 (~83.3% service) hardcoded a ratio that had to be
+            # kept in sync with the quantile level by hand.
             z_score = float(norm.ppf(self.target_service_level))
             latest_error = self.oos_errors[-1]
 
@@ -79,7 +89,7 @@ class InventoryPolicy:
             latest_error.index = latest_error.index.astype(str)
             ss = z_score * latest_error
 
-        elif type == "quantile":
+        elif self.safety_stock_type== "quantile":
             # Empirical approach: (Sum of tau-day quantile forecast) - (Sum of tau-day mean forecast)
             # Slices forecasted_demand over the risk period (horizon tau)
             if current_forecasts is None:
@@ -90,13 +100,25 @@ class InventoryPolicy:
             df_horizon = current_forecasts.copy()
             df_horizon["item_id"] = df_horizon["item_id"].astype(str)
 
+            # Same quantile the cost inputs imply, so this column cannot drift
+            # out of step with the level the forecaster was asked to produce.
+            column = self.service_quantile_column
+            if column not in df_horizon.columns:
+                raise KeyError(
+                    f"the quantile safety-stock path needs a '{column}' column, "
+                    f"which the cost inputs imply (p/(p+h) = "
+                    f"{self.target_service_level:.4f}). Available: "
+                    f"{[c for c in df_horizon.columns if c.startswith('q')]}. "
+                    f"Check PIPELINE_CONFIG['quantiles'] matches the level here."
+                )
+
             # Aggregate total expected demand and high-service quantile demand over the lead time window
             grouped = df_horizon.groupby("item_id", observed=True)
-            cum_q83 = grouped["q83_33"].sum()
+            cum_quantile = grouped[column].sum()
             cum_mean = grouped["sales_pred"].sum()
 
             # Buffer is the spread between target percentile and point estimate
-            ss = cum_q83 - cum_mean
+            ss = cum_quantile - cum_mean
 
         else:
             raise ValueError(f"Unknown safety stock calculation type: {type}")
@@ -153,7 +175,7 @@ class InventoryPolicy:
             actual_sales: pd.DataFrame, 
             forecasted_demand: pd.DataFrame,
             model_name: str = "unspecified",
-            forecast_type: str = "mean",
+            forecast_type: str = "recursive",
             store_id: str = "CA_1",
     ) -> pd.DataFrame:
         actual_sales = actual_sales.copy()
@@ -176,7 +198,7 @@ class InventoryPolicy:
 
             # --- REVIEW DAY LOGIC ---
             if idx % self.review_period == 0:
-                forecasts_prior_review = self.forecasts_df[self.forecasts_df['date'] <= day]
+                forecasts_prior_review = self.forecasts_df[self.forecasts_df['date'] < day]
                 
                 # Update OOS errors using history
                 if not forecasts_prior_review.empty:
@@ -258,9 +280,11 @@ def calculate_error_statistics(df_with_error: pd.DataFrame) -> pd.Series:
     """Computes per-item RMSE of cumulative TAU-day errors."""
     stats = (
         df_with_error.groupby("item_id", observed=True)["cum_error"]
-        .agg(rmse_tau=lambda x: np.sqrt(np.mean(x.dropna() ** 2)))
+        .agg(rmse_tau=lambda x: np.sqrt(np.mean(x.dropna() ** 2)),
+             sigma_tau = lambda x: x.dropna().std(ddof=1),
+             bias_tau=lambda x: x.dropna().mean())
         .reset_index()
     )
     # Ensure index is set to item_id cast as string
     stats['item_id'] = stats['item_id'].astype(str)
-    return stats.set_index("item_id")["rmse_tau"]
+    return stats.set_index("item_id")["sigma_tau"]

@@ -38,11 +38,7 @@ def _make_model(
 
     if kind == "lgbm":
         from lightgbm import LGBMRegressor  # optional dependency
-        objective = 'quantile' if quantile is not None else 'tweedie'
-
-        return LGBMRegressor(
-            objective=objective,
-            quantile=quantile,
+        params = dict(
             tweedie_variance_power=1.2,
             n_estimators=200,
             learning_rate=0.05,
@@ -51,6 +47,11 @@ def _make_model(
             colsample_bytree=0.8,
             random_state=42,
         )
+        if quantile is None:
+            return LGBMRegressor(objective='tweedie', **params)
+        # LightGBM names the quantile level 'alpha'; 'quantile' is silently ignored
+        # and the model then falls back to alpha=0.5, i.e. a median forecast.
+        return LGBMRegressor(objective='quantile', alpha=quantile, **params)
 
     raise ValueError(f'Unknown model: {kind}')
 
