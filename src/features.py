@@ -287,7 +287,7 @@ class TrainTestPrepare():
 
     @staticmethod
     def build_direct_train_frame(known_df:pd.DataFrame, target_known_cols:list[str],
-                                  original_feature_cols:list[str],horizon:int=28,
+                                  original_feature_cols:list[str],horizon:int=28, origin_stride:int=7,#current, 7 every 7 day create origin and target
                                   id_col:str='item_id',date_col:str='date',target_col:str='sales')-> tuple[pd.DataFrame,list]:
         '''build a stacked direct-horizon training frame
         known_df: train_df with one row per item,date with static calendar features and lag and rolling features already calculated
@@ -301,6 +301,9 @@ class TrainTestPrepare():
 
         # rename the date as origin_date
         origin = base[[date_col,*original_feature_cols]].rename(columns={'date':'origin_date'})#id col alread in feature_cols
+
+        if origin_stride>1:
+            origin=origin[((origin['origin_date']-origin['origin_date'].min()).dt.days % origin_stride)==0]
         # merge with targets with date renamed as target_date, on target_date
         targets = base[["item_id", "date", "sales", *target_known_cols]].rename(
             columns={
@@ -324,7 +327,7 @@ class TrainTestPrepare():
 
         direct_train = pd.concat(frames,ignore_index=True)
         direct_feature_cols = [*original_feature_cols, "horizon", *[f"target_{col}" for col in target_known_cols]]
-
+   
         return direct_train, direct_feature_cols
 
     @staticmethod
