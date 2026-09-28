@@ -1,0 +1,337 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>[TEST] Result: LGBM Direct (1-Year Training)</title>
+    <style>
+        :root {
+            --primary: #1e293b;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --border: #e2e8f0;
+            --text-main: #334155;
+            --text-muted: #64748b;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            margin: 0;
+            padding: 30px 20px;
+        }
+        .container {
+            max-width: 1280px;
+            width: 95%;
+            margin: 0 auto;
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+            padding: 32px;
+            box-sizing: border-box;
+        }
+        .header-title { font-size: 1.6rem; font-weight: 700; color: var(--primary); margin: 0 0 6px 0; }
+        .meta-subtitle { font-size: 0.88rem; color: var(--text-muted); margin-bottom: 24px; line-height: 1.5; }
+        .meta-tag {
+            display: inline-block;
+            background: #e2e8f0;
+            color: #334155;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            margin-right: 6px;
+        }
+        
+        /* Two-column layout hero banner */
+        .hero-banner {
+            background-color: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 28px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .hero-column { display: flex; flex-direction: column; }
+        .hero-column:first-child { border-right: 1px solid #cbd5e1; padding-right: 20px; }
+        .hero-banner .headline { font-weight: 700; color: #166534; font-size: 1.1rem; margin-bottom: 4px; }
+        .hero-banner .subhead { font-weight: 600; color: #15803d; font-size: 0.82rem; margin-top: 10px; text-transform: uppercase; letter-spacing: 0.5px;}
+        .hero-banner .metric-val { font-size: 1.3rem; font-weight: 700; color: #15803d; margin: 4px 0 2px 0; }
+        .hero-banner ul { margin: 6px 0 0 18px; padding: 0; font-size: 0.88rem; color: #15803d; }
+        .hero-banner li { margin-bottom: 6px; }
+        
+        .section-title {
+            font-size: 1.1rem; font-weight: 600; color: var(--primary);
+            margin: 28px 0 12px 0; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+        }
+        
+        .table-wrapper {
+            width: 100%;
+            overflow-x: auto;
+            margin-top: 10px;
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            font-size: 0.85rem; 
+            table-layout: auto;
+        }
+        th, td { 
+            padding: 10px 12px; 
+            text-align: right; 
+            border-bottom: 1px solid var(--border); 
+            white-space: nowrap;
+        }
+        th { 
+            background-color: #f8fafc; 
+            color: var(--text-muted); 
+            font-weight: 600; 
+            text-transform: uppercase; 
+            font-size: 0.72rem; 
+        }
+        td:first-child, th:first-child { text-align: left; }
+        tr:hover { background-color: #f1f5f9; }
+
+        .plot-container {
+            text-align: center;
+            margin-top: 16px;
+        }
+        .plot-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="header-title">[TEST] Result: LGBM Direct (1-Year Training)</h1>
+        <div class="meta-subtitle">
+            Generated: 2026-09-28 12:57:13 | Mode: <strong>TEST</strong> (1 Window/Split)<br/>
+            <span class="meta-tag">Lead Time: 4d</span>
+            <span class="meta-tag">Review Period: 7d</span>
+            <span class="meta-tag">Safety Stock Policy: rmse</span>
+            <span class="meta-tag">Holding Cost Per Unit: 0.2 </span>
+            <span class="meta-tag">Stockout Cost Per Unit: 1</span>
+        </div>
+
+        <div class="hero-banner">
+            <!-- Left Column: Key Accuracy Metrics -->
+            <div class="hero-column">
+                <div class="headline">Winning Model: LGBM</div>
+                <div class="subhead">Accuracy Profile (Avg Across 1 Window/Split)</div>
+                <ul>
+                    <li><strong>cum_MAE:</strong> 5.4316</li>
+                    <li><strong>cum_BIAS:</strong> -0.3360</li>
+                    <li><strong>MAE:</strong> 1.0880</li>
+                    <li><strong>BIAS%:</strong> -2.61%</li>
+                </ul>
+            </div>
+
+            <!-- Right Column: Business Impact & Costs -->
+            <div class="hero-column">
+                <div class="subhead">Business Impact</div>
+                <div class="metric-val">$16,479.29</div>
+                <div style="font-size: 0.78rem; color: #64748b;">Avg total cost across 1 window/split</div>
+
+                <div class="subhead">Cost Savings vs Other Models</div>
+                <ul>
+                
+                    <li><strong>$3,085.44</strong> vs Croston (15.77% FVA)</li>
+                
+                    <li><strong>$2,220.81</strong> vs Croston Sba (11.88% FVA)</li>
+                
+                    <li><strong>$1,601.45</strong> vs Seasonal Moving Average (8.86% FVA)</li>
+                
+                    <li><strong>$2,144.95</strong> vs Seasonal Naive (11.52% FVA)</li>
+                
+                    <li><strong>$1,136.25</strong> vs Simple Moving Average (6.45% FVA)</li>
+                
+                </ul>
+            </div>
+        </div>
+
+        <div class="section-title">Mean Metrics Across 1 Window/Split</div>
+        <div class="table-wrapper">
+            <table class="dataframe table">
+  <thead>
+    <tr style="text-align: right;">
+      <th>model</th>
+      <th>MAE</th>
+      <th>BIAS%</th>
+      <th>wrmsse</th>
+      <th>WAPE</th>
+      <th>cum_BIAS</th>
+      <th>cum_MAE</th>
+      <th>holding_cost</th>
+      <th>stockout_cost</th>
+      <th>total_cost</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>croston</td>
+      <td>1.2747</td>
+      <td>9.08%</td>
+      <td>0.9129</td>
+      <td>0.924225</td>
+      <td>1.1682</td>
+      <td>6.6659</td>
+      <td>$18,471.70</td>
+      <td>$1,093.03</td>
+      <td>$19,564.73</td>
+    </tr>
+    <tr>
+      <td>croston_sba</td>
+      <td>1.2564</td>
+      <td>3.62%</td>
+      <td>0.9141</td>
+      <td>0.910980</td>
+      <td>0.4662</td>
+      <td>6.5734</td>
+      <td>$17,484.79</td>
+      <td>$1,215.31</td>
+      <td>$18,700.11</td>
+    </tr>
+    <tr>
+      <td>lgbm</td>
+      <td>1.0880</td>
+      <td>-2.61%</td>
+      <td>0.8435</td>
+      <td>0.788917</td>
+      <td>-0.3360</td>
+      <td>5.4316</td>
+      <td>$15,251.41</td>
+      <td>$1,227.88</td>
+      <td>$16,479.29</td>
+    </tr>
+    <tr>
+      <td>seasonal_moving_average</td>
+      <td>1.1843</td>
+      <td>3.09%</td>
+      <td>0.9233</td>
+      <td>0.858743</td>
+      <td>0.3973</td>
+      <td>6.2794</td>
+      <td>$16,947.62</td>
+      <td>$1,133.12</td>
+      <td>$18,080.74</td>
+    </tr>
+    <tr>
+      <td>seasonal_naive</td>
+      <td>1.3033</td>
+      <td>-7.34%</td>
+      <td>1.2364</td>
+      <td>0.945015</td>
+      <td>-0.9444</td>
+      <td>6.3956</td>
+      <td>$17,154.20</td>
+      <td>$1,470.04</td>
+      <td>$18,624.24</td>
+    </tr>
+    <tr>
+      <td>simple_moving_average</td>
+      <td>1.1700</td>
+      <td>0.01%</td>
+      <td>0.9378</td>
+      <td>0.848345</td>
+      <td>0.0012</td>
+      <td>5.8985</td>
+      <td>$16,493.31</td>
+      <td>$1,122.23</td>
+      <td>$17,615.54</td>
+    </tr>
+  </tbody>
+</table>
+        </div>
+
+        <div class="section-title">Mean Forecast Value Added (FVA %) Across 1 Window/Split</div>
+        <div class="table-wrapper">
+            <table class="dataframe table">
+  <thead>
+    <tr style="text-align: right;">
+      <th>metric</th>
+      <th>fva_lgbm_vs_seasonal_naive</th>
+      <th>fva_seasonal_naive_vs_seasonal_naive</th>
+      <th>fva_simple_moving_average_vs_seasonal_naive</th>
+      <th>fva_seasonal_moving_average_vs_seasonal_naive</th>
+      <th>fva_croston_vs_seasonal_naive</th>
+      <th>fva_croston_sba_vs_seasonal_naive</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>MAE</td>
+      <td>16.52</td>
+      <td>0.0</td>
+      <td>10.23</td>
+      <td>9.13</td>
+      <td>2.20</td>
+      <td>3.60</td>
+    </tr>
+    <tr>
+      <td>WAPE</td>
+      <td>16.52</td>
+      <td>0.0</td>
+      <td>10.23</td>
+      <td>9.13</td>
+      <td>2.20</td>
+      <td>3.60</td>
+    </tr>
+    <tr>
+      <td>cum_MAE</td>
+      <td>15.07</td>
+      <td>0.0</td>
+      <td>7.77</td>
+      <td>1.82</td>
+      <td>-4.23</td>
+      <td>-2.78</td>
+    </tr>
+    <tr>
+      <td>holding_cost</td>
+      <td>11.09</td>
+      <td>0.0</td>
+      <td>3.85</td>
+      <td>1.20</td>
+      <td>-7.68</td>
+      <td>-1.93</td>
+    </tr>
+    <tr>
+      <td>stockout_cost</td>
+      <td>16.47</td>
+      <td>0.0</td>
+      <td>23.66</td>
+      <td>22.92</td>
+      <td>25.65</td>
+      <td>17.33</td>
+    </tr>
+    <tr>
+      <td>total_cost</td>
+      <td>11.52</td>
+      <td>0.0</td>
+      <td>5.42</td>
+      <td>2.92</td>
+      <td>-5.05</td>
+      <td>-0.41</td>
+    </tr>
+    <tr>
+      <td>wrmsse</td>
+      <td>31.78</td>
+      <td>0.0</td>
+      <td>24.15</td>
+      <td>25.33</td>
+      <td>26.16</td>
+      <td>26.07</td>
+    </tr>
+  </tbody>
+</table>
+        </div>
+
+        
+    </div>
+</body>
+</html>

@@ -1,8 +1,12 @@
 """Walmart M5 -- forecast accuracy and replenishment cost for store CA_1.
 
-One page, four sections: (1) executive brief beside the demand-pattern map,
-(2) where the inventory money goes, grouped, with holdout error alongside cost,
-(3) SKUs in detail: model choice, scope, actual vs predicted, orders, metrics,
+This is a model-selection study, not a policy search: every candidate forecast is replayed
+through one identical (s, S) replenishment policy, so a difference in cost is the forecast's
+doing and the question on the page is which model to deploy.
+
+One page, four sections: (1) what was compared and what it cost, beside the demand-pattern map,
+(2) what each model costs, plus the selected model's cost grouped by category/department/class,
+(3) one model in detail: scope, actual vs predicted, orders, ranking, review-by-review decisions,
 (4) system health, provenance and the audit trail.
 Everything is read from the holdout artifacts; nothing is recomputed here.
 """
@@ -148,13 +152,13 @@ def unit_costs(train):
     return train.groupby("item_id", observed=True)["sell_price"].mean()
 
 # ---------------------------------------------------------------- widgets
-def pick_filter(label, options, state_key, label_func=None):
+def pick_filter(label, options, state_key, label_func=None, default=None):
     """A selectbox that survives its own option list changing."""
     if not options:
         st.selectbox(label, [], key=state_key, disabled=True)
         return None
     if st.session_state.get(state_key) not in options:
-        st.session_state[state_key] = options[0]
+        st.session_state[state_key] = default if default in options else options[0]
     return st.selectbox(label, options, key=state_key, **({"format_func": label_func} if label_func else {}))
 
 def changed(applied_key, value):
@@ -225,11 +229,12 @@ def service_profile(subset):
     per_item = subset.groupby("item_id", observed=True).agg(
         on_hand=("on_hand", "mean"), sold=("actual_sales", "sum"),
         holding=("holding_cost", "sum"), stockout=("stockout_cost", "sum"), days=("date", "nunique"))
-    demand = float(per_item["sold"].sum())
+    sold = float(per_item["sold"].sum())
     lost = float(subset["lost_sales"].sum()) if "lost_sales" in subset.columns else 0.0
+    demand = sold + lost  # `actual_sales` is what the shelf gave out, not what was asked for
     rate = (per_item["sold"] / per_item["days"]).replace(0, np.nan)
-    return {"skus": len(per_item), "demand": demand, "lost": lost,
-            "fill": (demand - lost) / demand * 100.0 if demand > 0 else 100.0,
+    return {"skus": len(per_item), "demand": demand, "sold": sold, "lost": lost,
+            "fill": sold / demand * 100.0 if demand > 0 else 100.0,
             "dos": float((per_item["on_hand"] / rate).mean()) if rate.notna().any() else np.nan,
             "holding": float(per_item["holding"].sum()), "stockout": float(per_item["stockout"].sum())}
 
@@ -278,40 +283,49 @@ def render_value_cards(summary, reference_summary, inv, unit_cost, members, mode
     total_gap = pct_below(summary["total"], reference_summary["total"])
     hold_gap = pct_below(summary["holding"], reference_summary["holding"])
     metric_row([("Total inventory cost", f"${summary['total']:,.0f}",
-                 f"{total_gap:+.1f}% vs {model_label(REFERENCE_MODEL)}", "normal" if total_gap < 0 else "inverse"),
+                 f"{-total_gap:+.1f}% vs {model_label(REFERENCE_MODEL)}", "normal" if total_gap > 0 else "inverse"),
                 ("of which holding cost", f"${summary['holding']:,.0f}",
-                 f"{hold_gap:+.1f}% vs {model_label(REFERENCE_MODEL)}", "normal" if hold_gap < 0 else "inverse"),
+                 f"{-hold_gap:+.1f}% vs {model_label(REFERENCE_MODEL)}", "normal" if hold_gap > 0 else "inverse"),
                 ("Fill rate", fill, f"{profile['lost']:,.0f} units unmet", "off")])
 
-def render_business_framing(summary, fill_rate, baseline_summary=None):
-    """The brief: what was tested, how it was scored, and what the winner actually cost.
+def render_business_framing(summary, reference_summary, fill_rate, n_models):
+    """Section 1 brief: the design, the fixed policy, and the outcome against the reference model.
 
-    Framed as model selection, not policy search: the replenishment rule is identical in
-    every run, so the numbers describe which forecast to deploy, not an optimised policy."""
-    hold_pct = (summary['holding'] / summary['total']) * 100 if summary['total'] > 0 else 0
-    bottom = ("No reference model is loaded, so this run has no comparison to price the choice against.")
-    if baseline_summary:
-        bottom = (f"Against **{model_label(REFERENCE_MODEL)}** on the same assortment, the same policy costs "
-                  f"**\\${summary['total']:,.0f}** instead of **\\${baseline_summary['total']:,.0f}** -- "
-                  f"**{pct_below(summary['total'], baseline_summary['total']):.1f}% lower total cost**, "
-                  f"**{pct_below(summary['holding'], baseline_summary['holding']):.1f}% lower holding cost**, "
-                  f"at a **{fill_rate:.1f}% fill rate** -- and **{hold_pct:.0f}% of the cost is holding**, not "
-                  f"lost sales. Almost all of the gap is cash released from the shelf, "
-                  f"not service traded away. That is a real saving, but it is one policy tried once, not a "
-                  f"policy tuned to its best setting.")
-    st.markdown("\n\n".join((
-        (f"**What Was Compared**  \nSix demand models were backtested and then run blind on a 28-day holdout for "
-         f"store CA_1: **{summary['skus']:,} SKUs**, **{summary['sold']:,.0f} units** demanded. Each model drives the "
-         f"same {TAU}-day multi-step forecast (τ = {LEAD_TIME}d lead time + {REVIEW_PERIOD}d review) into one fixed "
-         f"periodic-review policy, so the only thing that varies between the runs is the forecast itself. Selection "
-         f"is made on two things: holdout accuracy, and the money the forecast costs once it reaches a shelf."),
-        (f"**The Fixed Replenishment Rule**  \nUnchanged across every run: safety stock "
-         f"**{SS_RULE}**, where z = {Z_SCORE:.2f} is the cost-implied critical fractile "
-         f"p/(p+h) = {STOCKOUT_RATE:g}/({STOCKOUT_RATE:g}+{HOLDING_RATE:g}) = {SERVICE_TARGET:.1%}, σ_error is "
-         f"out-of-sample forecast error, and τ = {TAU} days is the risk period. Each review cycle replays "
-         f"Q = max(0, S − IP) against realised sales, charging \\${HOLDING_RATE:g}/unit/day to hold and "
-         f"\\${STOCKOUT_RATE:g} per lost unit. Nothing here searches over policies -- that remains untested."),
-        (f"**The Bottom Line**  \n{bottom}"))))
+    Every figure is computed from the artifacts rather than typed into the copy, so the brief cannot
+    drift away from the cards and tables rendered directly beneath it.
+    """
+    st.markdown("#### What Was Compared")
+    st.markdown(
+        f"{n_models} demand models were backtested and then evaluated blind on a 28-day holdout for store CA_1: "
+        f"**{summary['skus']:,} SKUs, {summary['sold']:,.0f} units of realised demand**.\n\n"
+        f"Each model produces the same {TAU}-day multi-step forecast (**{LEAD_TIME}-day lead time + "
+        f"{REVIEW_PERIOD}-day review period**) and feeds into the **same fixed periodic-review inventory policy**. "
+        f"This isolates the effect of the forecast itself.\n\n"
+        "Models are therefore evaluated on two dimensions: **forecast accuracy** and the **downstream inventory "
+        "cost generated by that forecast**.")
+    st.markdown("#### The Fixed Replenishment Rule")
+    st.markdown(
+        f"The inventory policy is unchanged across all runs:\n\n**{SS_RULE}**\n\n"
+        f"where **z = {Z_SCORE:.2f}**, corresponding to a cost-implied critical fractile of "
+        f"**{SERVICE_TARGET:.1%}**, σ_error is the out-of-sample forecast error, and **τ = {TAU} days** is the "
+        f"risk period.\n\n"
+        f"At each review cycle, the policy replenishes:\n\n**Q = max(0, S − IP)**\n\n"
+        f"based on inventory position and realised demand, with **${HOLDING_RATE:.2f}/unit/day holding cost** and "
+        f"**${STOCKOUT_RATE:g} per lost unit**.\n\n"
+        "The policy itself is **not optimized** in this experiment. Only the forecast changes between runs.")
+    if not reference_summary or reference_summary.get("total", 0) <= 0:
+        return
+    st.markdown("#### The Bottom Line")
+    st.markdown(
+        f"Against **{model_label(REFERENCE_MODEL)}**, using the same assortment and the same inventory policy:\n\n"
+        f"- **Total cost:** ${summary['total']:,.0f} vs. ${reference_summary['total']:,.0f}\n"
+        f"- **Cost reduction:** **{pct_below(summary['total'], reference_summary['total']):.1f}%**\n"
+        f"- **Holding-cost reduction:** **{pct_below(summary['holding'], reference_summary['holding']):.1f}%**\n"
+        f"- **Fill rate:** **{fill_rate:.1f}%**\n"
+        f"- **Cost composition:** **{summary['holding'] / max(summary['total'], 1e-9) * 100:.0f}% holding cost**\n\n"
+        "The result shows that forecast choice can materially affect downstream inventory cost under a fixed "
+        "replenishment policy. However, this is **one policy configuration**, not an optimization of the "
+        "inventory policy itself.")
 
 def class_badges(classes):
     """SKU-share and revenue-share badges per Syntetos-Boylan class."""
@@ -475,7 +489,28 @@ def model_scorecard(preds, inv, members, models, truth=None):
                      "MAE/day": stats.get("MAE/day", np.nan)})
     return pd.DataFrame(rows).sort_values("total").reset_index(drop=True) if rows else pd.DataFrame()
 
-def render_model_comparison(scorecard, selected):
+def scorecard_table(scorecard, reference):
+    """Per-model cost and accuracy, plus the gap to the model the user picked as reference.
+
+    The reference model's own row reads 0 by construction. That row is the baseline itself, so a
+    zero there is a definitional fact rather than a missing comparison.
+    """
+    frame = scorecard.copy()
+    if reference in set(frame["model"]):
+        base = float(frame.loc[frame["model"] == reference, "total"].iloc[0])
+        frame["vs Reference $"] = frame["total"] - base
+        frame["Saving %"] = -frame["vs Reference $"] / base * 100 + 0.0 if base > 0 else np.nan
+        columns = ["label", "total", "vs Reference $", "Saving %", "holding", "stockout", "fill",
+                   "WAPE %", "Bias %", "MAE/day"]
+        headers = {"label": "Model", "vs Reference $": f"vs {model_label(reference)} $",
+                   "MAE/day": "MAE (units/day)"}
+        formats = {**SCORECARD_FORMATS, "vs Reference $": "${:+,.0f}", "Saving %": "{:+.0f}%"}
+        return frame[columns].rename(columns=headers).style.format(formats, na_rep="--") \
+            .map(bias_highlight, subset=["Bias %"])
+    return frame[SCORECARD_COLUMNS].rename(columns=SCORECARD_HEADERS).style.format(
+        SCORECARD_FORMATS, na_rep="--").map(bias_highlight, subset=["Bias %"])
+
+def render_model_comparison(scorecard, selected, reference=None):
     """Every model priced under one identical policy: the comparison this project is about.
 
     Real measured outcomes only, sorted by total cost, with the model in view picked out. The
@@ -488,7 +523,8 @@ def render_model_comparison(scorecard, selected):
     fig = go.Figure()
     for column, name, color in (("holding", "Holding cost", "#3b82f6"), ("stockout", "Stockout cost", "#ef4444")):
         fig.add_trace(go.Bar(name=name, y=ordered["label"], x=ordered[column], orientation="h",
-                             marker_color=[tint(color, 1.0 if m == selected else 0.38) for m in ordered["model"]],
+                             marker_color=[tint(color, 1.0 if m in (selected, reference) else 0.38)
+                                           for m in ordered["model"]],
                              customdata=np.stack([ordered["fill"], ordered["WAPE %"], ordered["MAE/day"]], axis=-1),
                              hovertemplate=f"<b>%{{y}}</b><br>{name}: $%{{x:,.0f}}<br>Fill rate "
                                            "%{customdata[0]:.1f}%<br>WAPE %{customdata[1]:.0f}% · MAE "
@@ -498,23 +534,40 @@ def render_model_comparison(scorecard, selected):
                       yaxis_title="", legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1))
     st.plotly_chart(fig, width="stretch")
     cheapest, kindest = scorecard.iloc[0], scorecard.loc[scorecard["stockout"].idxmin()]
+    shown = f" {model_label(selected)} and {model_label(reference)} are at full strength." if reference else ""
     st.caption(f"Cheapest overall: **{cheapest['label']}** at ${cheapest['total']:,.0f}. "
                f"Fewest lost sales: **{kindest['label']}** at ${kindest['stockout']:,.0f} of stockout cost"
                + ("" if kindest["model"] == cheapest["model"]
                   else f", holding {kindest['holding'] / max(kindest['total'], 1):.0%} of its budget to do it")
-               + ". Same policy in every row, so the spread is the forecast's doing alone.")
+               + f". Same policy in every row, so the spread is the forecast's doing alone.{shown}")
 
 def render_where_money_goes(lookup, preds, inv, unit_cost, models, default_model):
-    """Section 2: the model comparison, then the cost breakdown of whichever model is in view."""
-    st.markdown("### 2. What Each Model Costs")
-    filter_col, _ = st.columns([1, 4])
-    with filter_col:
-        model = pick_filter("Model in view", models, "cost_model", model_label) or default_model
-        group_by = pick_filter("Group cost by", COST_GROUPS, "cost_group")
+    """Section 2: one chart and one table, both scoped, both able to swap what they describe.
+
+    Two mutually exclusive views behind the breakdown filter. On "All models" the section is the
+    model comparison -- the first look -- with every candidate priced in this scope. Choosing a
+    breakdown turns the same two slots to that segment for the model in view. One view at a time
+    is the point: the alternative was a chart and a table per view, which is four objects in one
+    section and no clear answer to "which model, against what, in which slice".
+
+    The reference is chosen by the user, never by the model in view, so a model can never end up
+    compared against itself -- that case read as a table of zeros rather than as "no difference".
+    """
+    st.markdown("### 2. Model Breakdown")
+    model_col, reference_col, group_col, low_col = st.columns([1.2, 1.2, 1.2, 1.4])
+    with model_col:
+        model = pick_filter("Model in view", models, "cost_model", model_label, default_model)
+    choices = [m for m in models if m != model]
+    with reference_col:
+        reference = pick_filter("Compare against", choices, "cost_reference", model_label,
+                                REFERENCE_MODEL if REFERENCE_MODEL in choices else (choices[0] if choices else None))
+    with group_col:
+        group_by = pick_filter("Break down by", ["All models", *COST_GROUPS], "cost_group")
+    with low_col:
         low_only = st.toggle(f"Low-volume SKUs only (< {LOW_VOLUME} units/mo)", value=False, key="cost_low_volume")
-    summary, reference = summarise(inv, model), summarise(inv, REFERENCE_MODEL)
-    if not summary:
-        st.info(f"No inventory log for {model_label(model)}.")
+    summary = summarise(inv, model)
+    if not summary or not choices:
+        st.info(f"No inventory log for {model_label(model)}." if summary else "Only one model in these artifacts.")
         return
     per_item = summary["per_item"]
     if low_only:
@@ -523,64 +576,79 @@ def render_where_money_goes(lookup, preds, inv, unit_cost, models, default_model
             st.info(f"No SKU sold fewer than {LOW_VOLUME} units over the holdout under "
                     f"{model_label(model)}.")
             return
-        lookup = lookup.loc[lookup.index.isin(per_item.index)]
-    scope, base = rollup(per_item), reference
-    if base and low_only:
-        base = rollup(base["per_item"].reindex(per_item.index))
     members = per_item.index.tolist()
-    profile, capital = service_profile(scoped(inv, members, model)), working_capital(inv, unit_cost, members, model)
-    cost_delta = lost_delta = None
-    if base and base.get("total", 0) > 0:
-        cost_delta = (f"{pct_below(scope['total'], base['total']):+.1f}% vs "
-                      f"{model_label(REFERENCE_MODEL)}")
-        lost_delta = f"{scope['lost']:,.0f} lost ({scope['lost'] - base['lost']:+,.0f} vs reference)"
-    metric_row([(f"Inventory cost @ ${HOLDING_RATE:g}/unit/day", f"${scope['total']:,.0f}", cost_delta,
-                 "normal" if cost_delta else "off"),
-                ("Holding share of cost", f"{scope['holding'] / max(scope['total'], 1):.0%}",
-                 f"${scope['stockout']:,.0f} is stockout", "inverse"),
-                ("Working capital tied up", f"${capital:,.0f}" if pd.notna(capital) else "n/a",
-                 f"{profile.get('dos', float('nan')):.0f} days of supply"),
-                ("Units bought vs sold", f"{scope['bought']:,.0f} / {scope['sold']:,.0f}", lost_delta, "inverse")])
-    st.caption(f"Cards, chart and table below are scoped to **{model_label(model)}**; every percentage is against "
-               f"**{model_label(REFERENCE_MODEL)}** replayed over the same {scope['skus']:,} SKUs.")
+    if group_by != "All models":
+        lookup = lookup.loc[lookup.index.isin(members)]
+    scorecard = model_scorecard(preds, inv, members, models)
+    if scorecard.empty or model not in set(scorecard["model"]):
+        st.info("No cost data for this scope.")
+        return
+    priced = scorecard.set_index("model")
+    here = priced.loc[model]
+    base = priced.loc[reference] if reference in priced.index else None
+    total_gap = pct_below(here["total"], base["total"]) if base is not None else None
+    st.caption(f"{len(members):,} SKUs in scope" + (f" · every percentage is against "
+               f"**{model_label(reference)}** in the same scope." if base is not None else "."))
+    metric_row([(f"Inventory cost @ ${HOLDING_RATE:g}/unit/day", f"${here['total']:,.0f}",
+                 f"{-total_gap:+.1f}% vs {model_label(reference)}" if total_gap is not None else None,
+                 "normal" if total_gap and total_gap > 0 else ("inverse" if total_gap else "off")),
+                ("Holding share of cost", f"{here['holding'] / max(here['total'], 1):.0%}",
+                 f"${here['stockout']:,.0f} is stockout", "inverse"),
+                ("Working capital tied up",
+                 (lambda c: f"${c:,.0f}" if pd.notna(c) else "n/a")(working_capital(inv, unit_cost, members, model)),
+                 f"{service_profile(scoped(inv, members, model)).get('dos', float('nan')):.0f} days of supply"),
+                ("Units bought vs sold", f"{per_item['bought'].sum():,.0f} / {per_item['sold'].sum():,.0f}",
+                 f"{here['lost']:,.0f} lost ({here['lost'] - base['lost']:+,.0f} vs reference)"
+                 if base is not None else None, "inverse")])
+    plot_col, table_col = st.columns([1.1, 1.6])
+    if group_by == "All models":
+        with plot_col:
+            st.markdown(f"**Every model, same policy, {len(members):,} SKUs**")
+            render_model_comparison(scorecard, model, reference)
+        with table_col:
+            st.markdown("**Cost and accuracy, every model**")
+            st.dataframe(scorecard_table(scorecard, reference), width="stretch", hide_index=True)
+            st.caption("Cost is what the same policy charged; accuracy is the holdout error on the grouped daily "
+                       "series. Nothing here is a tuned policy, so read it as model selection.")
+        return
     labels = group_labels(per_item.index, lookup, group_by)
     grouped = group_costs(per_item, labels, group_by)
     if grouped.empty:
         st.info("No cost data for this grouping.")
         return
-    base_groups = group_costs(base["per_item"].reindex(per_item.index), labels, group_by) if base else pd.DataFrame()
-    base_total = base_groups.set_index("Group")["total"].reindex(grouped["Group"]) if not base_groups.empty else None
+    base_groups = group_costs(summarise(inv, reference)["per_item"].reindex(per_item.index), labels, group_by)
+    base_total = (base_groups.set_index("Group")["total"].reindex(grouped["Group"])
+                  if not base_groups.empty else None)
     grouped["vs Base $"] = grouped["total"] - base_total.values if base_total is not None else np.nan
     grouped["Saving %"] = np.where(base_total.values > 0, -grouped["vs Base $"] / base_total.values * 100, np.nan)
     accuracy = group_accuracy(preds, labels, model, truth_model(preds))
     for column in ("Bias %", "WAPE %"):
         grouped[column] = (accuracy.set_index("Group").reindex(grouped["Group"])[column].values
                            if not accuracy.empty else np.nan)
-    scorecard = model_scorecard(preds, inv, members, models)
-    plot_col, table_col = st.columns([1.1, 1.6])
     with plot_col:
+        st.markdown(f"**{group_by} · {model_label(model)}**")
         fig = go.Figure()
-        for name, column, color in (("Holding Cost", "holding", "#3b82f6"), ("Stockout Cost", "stockout", "#ef4444")):
+        for name, column, color in (("Holding Cost", "holding", "#3b82f6"),
+                                    ("Stockout Cost", "stockout", "#ef4444")):
             fig.add_trace(go.Bar(name=name, y=grouped["Group"], x=grouped[column], orientation="h", marker_color=color,
                                  hovertemplate=f"<b>%{{y}}</b><br>{name.split()[0]}: $%{{x:,.0f}}<extra></extra>"))
-        fig.update_layout(template="plotly_white", barmode="stack", height=max(240, 60 * len(grouped) + 70),
+        if base_total is not None:
+            fig.add_trace(go.Scatter(y=grouped["Group"], x=base_total.values, mode="markers", name=model_label(reference),
+                                     marker=dict(symbol="line-ew-open", size=13, color="#0f172a", line=dict(width=2.5)),
+                                     hovertemplate="<b>%{y}</b><br>" + model_label(reference) + ": $%{x:,.0f}<extra>Reference</extra>"))
+        fig.update_layout(template="plotly_white", barmode="stack", height=max(240, 60 * len(grouped) + 80),
                           margin=dict(l=10, r=30, t=10, b=10), bargap=0.35, xaxis_title="Inventory Cost Breakdown ($)",
                           yaxis_title="", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig, width="stretch")
-        st.markdown("**Same policy, every model**")
-        render_model_comparison(scorecard, model)
     with table_col:
-        st.markdown(f"**{group_by} breakdown · {model_label(model)}**")
-        st.dataframe(grouped[GROUP_COLUMNS].rename(columns=GROUP_HEADERS).style.format(GROUP_FORMATS, na_rep="--")
+        st.markdown(f"**{group_by} breakdown**")
+        headers, formats = dict(GROUP_HEADERS), dict(GROUP_FORMATS)
+        headers["vs Base $"] = f"vs {model_label(reference)} $"
+        formats.pop("vs Baseline $"), formats.update({headers["vs Base $"]: GROUP_FORMATS["vs Baseline $"]})
+        st.dataframe(grouped[GROUP_COLUMNS].rename(columns=headers).style.format(formats, na_rep="--")
                      .map(bias_highlight, subset=["Bias %"]), width="stretch", hide_index=True)
-        st.caption(f"Reference is {model_label(REFERENCE_MODEL)} on the same {scope['skus']:,} SKUs. Bias is shaded "
-                   "past ±10%: persistent positive bias is what inflates the order-up-to level.")
-        st.markdown("**Every model · cost and accuracy on this scope**")
-        st.dataframe(scorecard[SCORECARD_COLUMNS].rename(columns=SCORECARD_HEADERS)
-                     .style.format(SCORECARD_FORMATS, na_rep="--").map(bias_highlight, subset=["Bias %"]),
-                     width="stretch", hide_index=True)
-        st.caption("Cost is what the same policy charged; accuracy is the holdout error on the grouped daily series. "
-                   "The policy was never re-tuned per model, so this is model selection, not policy search.")
+        st.caption(f"{model_label(reference)} on the same {len(members):,} SKUs. Bias is shaded past ±10%: "
+                   "persistent positive bias is what inflates the order-up-to level.")
 
 # ---------------------------------------------------------------- section 3
 def render_filter_bar(lookup):
@@ -837,7 +905,7 @@ def render_sku_detail(train, preds, inv, lookup, unit_cost, available):
     render_review_table(preds, inv, members, policy_model)
 
 # ---------------------------------------------------------------- notes
-def render_notes(provenance):
+def render_notes(provenance, holding_share):
     """System health, policy mechanics, and the audit trail, behind one disclosure."""
     with st.expander("🛠️ System Health, Provenance & Audit Trail", expanded=False):
         implied, has_issue = provenance["implied_rate"], False
@@ -869,9 +937,9 @@ def render_notes(provenance):
             st.markdown(f"- **What this run does not claim**: the replenishment policy was held fixed and identical for "
                         f"every model. No search was run over service targets, buffer sizes or cost rates, so the "
                         f"numbers rank forecasts under one policy -- they are not the cost of a tuned policy. At "
-                        f"{HOLDING_RATE:g}/unit/day against a {STOCKOUT_RATE:g}/lost unit, holding dominates the bill, "
-                        f"and {100 * SERVICE_TARGET / (SERVICE_TARGET + 1):.0f}% of the cost is carrying stock rather "
-                        f"than failing to sell it.\n"
+                        f"{HOLDING_RATE:g}/unit/day against a {STOCKOUT_RATE:g}/lost unit, holding dominates the bill: "
+                        f"**{holding_share:.0f}% of the cost this run charged is carrying stock**, not failing to sell "
+                        f"it.\n"
                         f"- **The untested lever**: safety stock is the only dial that was never turned. Recalibrating "
                         f"σ_error as a rolling empirical error (out-of-sample only) and re-running the holdout at 95% "
                         f"and 99% service, then comparing the Buffer Ratio and holding-cost columns in section 3, would "
@@ -885,7 +953,7 @@ def render_notes(provenance):
 
 # ---------------------------------------------------------------- page
 def main():
-    st.set_page_config(page_title="Choosing a Demand Model for Store CA_1", layout="wide")
+    st.set_page_config(page_title="Retail Demand Forecasting & Inventory Optimization", layout="wide")
     st.markdown("<style>.block-container{padding-top:2rem}[data-testid='stMetricValue']{font-size:1.4rem}</style>",
                 unsafe_allow_html=True)
     art = load_artifacts(artifact_signature())
@@ -894,9 +962,10 @@ def main():
         st.error("No holdout artifacts in `results/tests/`. Remove the `quit()` in `run_pipeline.py` and re-run the "
                  "test mode.")
         return
-    st.title("Choosing a Demand Model for Store CA_1")
-    st.caption("Walmart M5 · 300 curated SKUs · backtest + 28-day blind holdout · one fixed (s, S) replenishment "
-               "policy applied identically to every model")
+    st.title("Retail Demand Forecasting & Inventory Optimization")
+    st.markdown("Turning demand forecasts into replenishment decisions and inventory-cost trade-offs")
+    st.markdown("This dashboard evaluates demand forecasting models not only by forecast accuracy, but by their "
+                "downstream impact on safety stock, replenishment decisions, holding costs, and stockout costs.")
     available = sorted(preds["model"].dropna().unique().tolist())
     inv_models = [m for m in available if m in set(inv["model"].dropna())] or available
     st.session_state.setdefault("policy_model", "lgbm" if "lgbm" in available else (available[0] if available else None))
@@ -916,8 +985,9 @@ def main():
     st.markdown("### 1. What Was Compared, and What It Cost")
     framing, profile = st.columns([1.1, 1.3])
     with framing:
-        render_business_framing(summary, service_profile(scoped(inv, members, policy_model)).get("fill", 100.0),
-                                baseline_summary)
+        render_business_framing(summary, baseline_summary,
+                                service_profile(scoped(inv, members, policy_model)).get("fill", 100.0),
+                                len(available))
     with profile:
         render_sku_profile(classes, inv, members, policy_model)
     st.divider()
@@ -925,7 +995,7 @@ def main():
     st.divider()
     render_sku_detail(train, preds, inv, lookup, unit_cost, available)
     st.divider()
-    render_notes(provenance)
+    render_notes(provenance, 100 * summary["holding"] / max(summary["total"], 1e-9))
 
 if __name__ == "__main__":
     main()

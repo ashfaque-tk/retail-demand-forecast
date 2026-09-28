@@ -14,7 +14,7 @@ data/
 *.pkl
 *.joblib
 models/
-results/
+
 # --- Logs & Temporary Files ---
 *.log
 CACHED
