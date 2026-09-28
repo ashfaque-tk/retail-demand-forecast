@@ -127,6 +127,8 @@ HTML_TEMPLATE = """
             <span class="meta-tag">Lead Time: {{ lead_time }}d</span>
             <span class="meta-tag">Review Period: {{ review_period }}d</span>
             <span class="meta-tag">Safety Stock Policy: {{ policy_type }}</span>
+            <span class="meta-tag">Holding Cost Per Unit: {{hold_cost}} </span>
+            <span class="meta-tag">Stockout Cost Per Unit: {{stock_cost}}</span>
         </div>
 
         <div class="hero-banner">
@@ -216,6 +218,8 @@ def generate_experiment_html_report(
     output_path: Path,
     lead_time: int = 7,
     review_period: int = 7,
+    hold_cost: float = 0.2,
+    stock_cost: float = 1.0,
     policy_type: str = "RMSE (Norm Sim)",
     model_name: Optional[str] = None,
     model_type: Optional[str] = None,
@@ -339,6 +343,8 @@ def generate_experiment_html_report(
         num_windows=num_windows,
         eval_mode_label=eval_mode_label,
         lead_time=lead_time,
+        hold_cost=hold_cost,
+        stock_cost=stock_cost,
         review_period=review_period,
         policy_type=policy_type,
         winner_model_name=winning_model_name.upper(),

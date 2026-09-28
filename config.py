@@ -15,7 +15,7 @@ TEST_DATA_PATH = DATA_DIR / "processed/test_filtered_ca1.parquet"
 # in, so moving either cost moves the quantile with it. At h=0.2 and p=1.0 this
 # is 0.8333, and int(level*100) names that column `q83`.
 HOLDING_COST_RATE = 0.2
-STOCKOUT_COST_RATE = 1.0
+STOCKOUT_COST_RATE = 1
 
 
 def critical_quantile(holding_cost_rate: float,

@@ -10,6 +10,8 @@ I. uv run_pipeline.py --mode backtest --model lgbm --
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 from pathlib import Path
 import time
@@ -22,6 +24,8 @@ from config import (
     DEPLOYMENT_DIR,
     RESULTS_DIR,
     PIPELINE_CONFIG,
+    HOLDING_COST_RATE,
+    STOCKOUT_COST_RATE
 )
 from src.data_checks import validate_raw
 from src.backtest_engine import BacktestEngine, DeploymentResult
@@ -186,6 +190,18 @@ def save_to_parquet(models_data:dict,filename:str):
     combined_df.to_parquet(output_path+'/'+filename, engine="pyarrow", index=False)
 
     print(f"Successfully saved combined predictions to '{output_path+'/'+filename}'")
+
+    # Record which source produced this artifact. The dashboard reads it back to
+    # tell "these numbers are stale" apart from "someone ran git and every file's
+    # mtime moved" -- mtime alone flags both, and a spurious staleness warning on
+    # a client-facing page is worse than none.
+    if filename.startswith("test_inventory"):
+        def _digest(path):
+            return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+        manifest = {name: _digest(BASE_DIR / name)
+                    for name in ("run_pipeline.py", "config.py")}
+        (Path(output_path) / "source_state.json").write_text(json.dumps(manifest, indent=2))
+
     return combined_df
 
 def main():
@@ -205,8 +221,8 @@ def main():
     if args.quantile_list:
         PIPELINE_CONFIG['quantiles'] = args.quantile_list
     else:
-        logger.info("No --quantiles given; using cost-derived levels: %s",
-                    PIPELINE_CONFIG['quantiles'])
+        logger.info("No --quantiles given; using cost-derived levels: %s | Holding Cost Per Unit: %s | Stockout Cost Per Unit: %s",
+                    PIPELINE_CONFIG['quantiles'],HOLDING_COST_RATE,STOCKOUT_COST_RATE)
     if args.safety_stock_policy:
         PIPELINE_CONFIG['safety_stock_policy'] = args.safety_stock_policy
     logger.info("Safety stock policy: %s | quantiles: %s",
@@ -219,7 +235,7 @@ def main():
         PIPELINE_CONFIG["forecast_type"],
         PIPELINE_CONFIG['max_windows']
     )
-
+    
     # 1. Load raw data and validation
     logger.info("[1/3] Loading Training and Unknown data...")
     train_df = pd.read_parquet(TRAIN_DATA_PATH)
@@ -280,6 +296,8 @@ def main():
                     fva_df=pd.DataFrame(holdout_fva),
                     output_path= holdout_results,
                     lead_time=lead_time,
+                    hold_cost = HOLDING_COST_RATE,
+                    stock_cost= STOCKOUT_COST_RATE,
                     review_period=review_period,
                     model_type=type,
                     train_years=training_yr,
@@ -289,7 +307,7 @@ def main():
         logger.info(f"Winning Model on Test Set: {winner}. Deploy ")
 
         print(f'champion model is {winner}, inventory: {test_inventory[winner]}')
-        print(test_preds['lgbm'])
+        # print(test_preds['lgbm'])
         ### winning_model preds and inventory will be uploaded to dB, and also saved to parquet
         save_to_parquet(models_data=test_preds,filename=f'test_preds-{model}-{type}-{timestamp_str}.parquet')
         save_to_parquet(models_data=test_inventory,filename=f'test_inventory-{model}-{type}-{timestamp_str}.parquet')
@@ -335,6 +353,8 @@ def main():
         report_out = RESULTS_DIR/f'backtest_expt_report_{model}_{type}_{training_yr}yr_{timestamp_str}.html'
         generate_experiment_html_report(metrics_df=metrics_df,fva_df=fva_df,
                                         output_path=report_out,lead_time=lead_time,
+                                        hold_cost= HOLDING_COST_RATE,
+                                        stock_cost=STOCKOUT_COST_RATE,
                                         review_period=review_period,
                                         model_type=type,
                                         train_years=training_yr,

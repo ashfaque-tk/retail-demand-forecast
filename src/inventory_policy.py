@@ -84,11 +84,12 @@ class InventoryPolicy:
             latest_error = self.oos_errors[-1]
 
             if isinstance(latest_error, pd.DataFrame):
-                latest_error = latest_error.set_index("item_id")["rmse_tau"]
+                latest_error = latest_error.set_index("item_id")["sigma_tau"]
 
             latest_error.index = latest_error.index.astype(str)
+          
             ss = z_score * latest_error
-
+            
         elif self.safety_stock_type== "quantile":
             # Empirical approach: (Sum of tau-day quantile forecast) - (Sum of tau-day mean forecast)
             # Slices forecasted_demand over the risk period (horizon tau)
