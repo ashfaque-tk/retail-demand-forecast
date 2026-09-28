@@ -2,8 +2,8 @@
 
 One page, three sections:
   1. the business framing beside the demand-pattern map of the store
-  2. where the inventory money goes, grouped
-  3. SKUs in detail: actual vs predicted, the orders placed, and one line of metrics
+  2. where the inventory money goes, grouped, with holdout error alongside cost
+  3. SKUs in detail: model choice, scope, actual vs predicted, orders, metrics
 
 Everything is read from the holdout artifacts; nothing is recomputed here.
 
@@ -12,6 +12,8 @@ Section 1 is `render_business_framing` + `render_sku_profile`, section 2 is
 """
 
 import glob
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -19,6 +21,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 RESULTS_DIR, TESTS_DIR = BASE_DIR / "results", BASE_DIR / "results" / "tests"
@@ -63,8 +66,32 @@ def model_label(name):
 # Loading
 # ============================================================
 
+def artifact_signature():
+    """Cheap fingerprint of everything `load_artifacts` reads.
+
+    `load_artifacts` takes this as its only argument so the cache key moves when
+    the files move. With no argument at all Streamlit would cache the whole
+    session and keep serving the first load's numbers, so re-running the pipeline
+    in a terminal would not show up on the page until a hard refresh -- which is
+    exactly the loop this page gets used in. Source files go in by content hash
+    so the staleness check re-evaluates too; a `git stash` rewrites mtimes
+    without changing content, and must not count as an edit.
+    """
+    parts = []
+    for pattern in ("test_preds-*.parquet", "test_inventory-*.parquet"):
+        for path in sorted(TESTS_DIR.glob(pattern), reverse=True)[:1]:
+            parts.append((path.name, int(path.stat().st_mtime)))
+    for path in (RESULTS_DIR / "sku_demand_classes.csv", TESTS_DIR / "source_state.json"):
+        parts.append((path.name, int(path.stat().st_mtime) if path.exists() else 0))
+    for name in ("run_pipeline.py", "config.py"):
+        source = BASE_DIR / name
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16] if source.exists() else ""
+        parts.append((name, digest))
+    return tuple(parts)
+
+
 @st.cache_data
-def load_artifacts():
+def load_artifacts(signature):
     """Every artifact the page reads, plus which run they came from."""
     train_path = DATA_DIR / "train_filtered_ca1.parquet"
     train = pd.read_parquet(train_path) if train_path.exists() else pd.DataFrame()
@@ -92,11 +119,30 @@ def load_artifacts():
         if not positive.empty:
             implied = float((positive["holding_cost"] / positive["on_hand"]).median())
 
+    # Content hashes, not mtimes. A git checkout or stash rewrites every file in
+    # the tree and bumps all the mtimes, so an mtime comparison reports "stale"
+    # for a tree nobody edited. The manifest is written by `save_to_parquet` at
+    # run time; its absence just means the check stays quiet.
+    manifest_path = TESTS_DIR / "source_state.json"
+    drift = []
+    if manifest_path.exists() and inv_files:
+        try:
+            recorded = json.loads(manifest_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            recorded = {}
+        for name in ("run_pipeline.py", "config.py"):
+            source = BASE_DIR / name
+            if name in recorded and source.exists():
+                current = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
+                if current != recorded[name]:
+                    drift.append(name)
+
     return {"train": train, "preds": preds, "inv": inv, "classes": classes,
             "provenance": {
                 "preds": Path(pred_files[0]).name if pred_files else None,
                 "inv": Path(inv_files[0]).name if inv_files else None,
-                "implied_rate": implied}}
+                "implied_rate": implied,
+                "drift": drift}}
 
 
 def item_lookup(classes, preds):
@@ -138,11 +184,97 @@ def changed(applied_key, value):
     previous = st.session_state.get(applied_key, value)
     st.session_state[applied_key] = value
     return previous != value
+def evaluate_inventory_performance(
+    inv_df: pd.DataFrame,
+    members: list[str],
+    model: str,
+    selection_label: str,
+) -> pd.DataFrame:
+    """Calculates aggregated inventory metrics over all selected items in the scope
 
+    returning a single summary row.
+    """
+    scoped_inv = inv_df[
+        (inv_df["item_id"].isin(members)) & (inv_df["model"] == model)
+    ].copy()
 
+    if scoped_inv.empty:
+        return pd.DataFrame()
+
+    # Aggregate daily totals across all selected SKUs
+    daily_agg = scoped_inv.groupby("date", as_index=False).agg(
+        actual_sales=("actual_sales", "sum"),
+        on_hand=("on_hand", "sum"),
+        safety_stock=("safety_stock", "sum"),
+        lost_sales=(
+            "lost_sales",
+            "sum",
+        )
+        if "lost_sales" in scoped_inv.columns
+        else ("actual_sales", "count"),
+    )
+
+    total_demand = daily_agg["actual_sales"].sum()
+
+    # Unmet demand calculation
+    if "lost_sales" in scoped_inv.columns:
+        unmet_demand = scoped_inv["lost_sales"].sum()
+    else:
+        unmet_demand = np.maximum(
+            0, scoped_inv["actual_sales"] - scoped_inv["on_hand"]
+        ).sum()
+
+    # Aggregate Fill Rate
+    fill_rate = (
+        ((total_demand - unmet_demand) / total_demand) * 100.0
+        if total_demand > 0
+        else 100.0
+    )
+
+    # Item-days with stockouts
+    stockout_item_days = int((scoped_inv["on_hand"] == 0).sum())
+    total_item_days = len(scoped_inv)
+    stockout_pct = (
+        (stockout_item_days / total_item_days * 100.0)
+        if total_item_days > 0
+        else 0.0
+    )
+
+    avg_on_hand = daily_agg["on_hand"].mean()
+    avg_safety_stock = daily_agg["safety_stock"].mean()
+
+    metrics = [
+        {
+            "Selection Scope": selection_label,
+            "Total SKUs": len(members),
+            "Total Demand": int(total_demand),
+            "Fill Rate (%)": f"{max(0.0, fill_rate):.2f}%",
+            "Stockout Rate": f"{stockout_pct:.1f}% ({stockout_item_days} item-days)",
+            "Mean Daily On-Hand": f"{avg_on_hand:,.1f} units",
+            "Mean Daily SS": f"{avg_safety_stock:,.1f} units",
+        }
+    ]
+
+    return pd.DataFrame(metrics)
 # ============================================================
 # Frame maths
 # ============================================================
+
+def truth_model(preds):
+    """Which model's rows carry usable `real_sales`, chosen by content not name.
+
+    The artifact writes `real_sales` on the baseline rows only -- the lgbm rows
+    are zero-filled -- so ground truth has to be lifted off a baseline. Matching
+    on a hardcoded name is what broke this: `MODEL_LABELS` calls it "Naive" but
+    the parquet column says `seasonal_naive`, so the filter matched zero rows and
+    the whole accuracy line silently rendered nothing.
+    """
+    if preds.empty or "real_sales" not in preds.columns:
+        return None
+    totals = preds.groupby("model", observed=True)["real_sales"].sum()
+    usable = totals[totals > 0]
+    return str(usable.idxmax()) if not usable.empty else None
+
 
 def daily_sum(frame, members, model, column):
     """Total `column` per day across the members under one model."""
@@ -298,10 +430,9 @@ def summarise(inv, model):
         (per_item["stockout"] == 0).sum()), **totals)
 
 
-def group_costs(per_item, lookup, group_by):
-    """Aggregate per-item cost into the group being compared."""
-    if per_item.empty:
-        return pd.DataFrame()
+def group_labels(items, sold, lookup, group_by):
+    """Label every SKU with the group it falls into for the chosen comparison."""
+    items = pd.Index(items)
     if group_by == "Demand class":
         column = "class"
     elif group_by in ("Category", "Department"):
@@ -310,15 +441,19 @@ def group_costs(per_item, lookup, group_by):
         column = None
 
     if column is None:
-        labels = pd.Series(np.where(per_item["sold"] < LOW_VOLUME, group_by,
-                                     f">= {LOW_VOLUME} units/mo"), index=per_item.index)
-    else:
-        values = lookup[column].astype(str).str.strip()
-        labels = pd.Series(per_item.index.map(values.str.title() if column == "class" else values),
-                           index=per_item.index)
+        return pd.Series(np.where(sold.reindex(items).fillna(0) < LOW_VOLUME, group_by,
+                                  f">= {LOW_VOLUME} units/mo"), index=items)
+    values = lookup[column].astype(str).str.strip()
+    return pd.Series(items.map(values.str.title() if column == "class" else values),
+                     index=items)
 
+
+def group_costs(per_item, labels, group_by):
+    """Aggregate per-item cost into the group being compared."""
+    if per_item.empty:
+        return pd.DataFrame()
     labelled = per_item.copy()
-    labelled["group"] = labels.fillna("Unclassified")
+    labelled["group"] = labels.reindex(per_item.index).fillna("Unclassified")
     grouped = labelled.groupby("group", observed=True).agg(
         skus=("total", "size"), bought=("bought", "sum"), sold=("sold", "sum"),
         holding=("holding", "sum"), stockout=("stockout", "sum"), total=("total", "sum"))
@@ -332,92 +467,227 @@ def group_costs(per_item, lookup, group_by):
     return grouped.drop(columns="_o", errors="ignore").reset_index(drop=True)
 
 
-def render_where_money_goes(summary, lookup, model):
-    """Section 2: portfolio KPIs plus cost grouped the way a planner reads it."""
+def group_accuracy(preds, labels, model, truth):
+    """Holdout error on the daily series summed *inside* each group.
+
+    Scored after aggregation rather than averaged from the members' scores: a
+    category's daily series is far smoother than any single SKU inside it, so
+    averaging member MAEs and calling it the category MAE would overstate the
+    error. These numbers are only comparable with other groups, not with the
+    per-SKU numbers in section 3.
+    """
+    if preds.empty or truth is None or labels.empty:
+        return pd.DataFrame()
+    pred_by_item = {item: frame.set_index("date")["sales_pred"] for item, frame in
+                    preds[preds["model"] == model].groupby("item_id", observed=True)}
+    truth_by_item = {item: frame.set_index("date")["real_sales"] for item, frame in
+                     preds[preds["model"] == truth].groupby("item_id", observed=True)}
+
+    rows = []
+    for label, members in labels.groupby(labels).groups.items():
+        usable = [item for item in members if item in pred_by_item and item in truth_by_item]
+        if not usable:
+            continue
+        actual = pd.DataFrame({i: truth_by_item[i] for i in usable}).sum(axis=1)
+        predicted = pd.DataFrame({i: pred_by_item[i] for i in usable}).sum(axis=1)
+        frame = pd.concat([actual.rename("real_sales"), predicted.rename("sales_pred")],
+                          axis=1).dropna()
+        if frame.empty:
+            continue
+        a = frame["real_sales"].to_numpy(dtype="float64")
+        p = frame["sales_pred"].to_numpy(dtype="float64")
+        total = float(a.sum())
+        if total <= 0:
+            continue
+        error = a - p
+        rows.append({
+            "Group": label,
+            "MAE": float(np.mean(np.abs(error))),
+            "Bias %": float((p.sum() - total) / total * 100),
+            "WRMSE": float(np.sqrt(np.mean(error ** 2)) / (total / len(a))),
+            "WAPE %": float(np.sum(np.abs(error)) / total * 100),
+            "pred_units": float(p.sum()),
+            "real_units": total})
+    return pd.DataFrame(rows)
+
+
+def render_where_money_goes(summary, lookup, preds, model):
+    """Section 2: Portfolio KPIs, stacked cost breakdown, and holdout error per group."""
     st.markdown("### 2. Where the money goes")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total inventory cost", f"${summary['total']:,.0f}")
-    c2.metric("Holding share of cost",
-              f"{summary['holding'] / max(summary['total'], 1):.0%}",
-              f"${summary['stockout']:,.0f} is stockout", delta_color="inverse")
-    c3.metric("Units bought vs sold", f"{summary['bought']:,.0f} / {summary['sold']:,.0f}",
-              f"{summary['lost']:,.0f} lost", delta_color="inverse")
-    c4.metric("SKUs that never stocked out", f"{summary['no_stockout']} / {summary['skus']}")
+    c2.metric(
+        "Holding share of cost",
+        f"{summary['holding'] / max(summary['total'], 1):.0%}",
+        f"${summary['stockout']:,.0f} is stockout",
+        delta_color="inverse",
+    )
+    c3.metric(
+        "Units bought vs sold",
+        f"{summary['bought']:,.0f} / {summary['sold']:,.0f}",
+        f"{summary['lost']:,.0f} lost",
+        delta_color="inverse",
+    )
+    c4.metric(
+        "SKUs that never stocked out",
+        f"{summary['no_stockout']} / {summary['skus']}",
+    )
 
     group_by = pick_filter("Group cost by", COST_GROUPS, "cost_group")
-    grouped = group_costs(summary["per_item"], lookup, group_by)
+    per_item = summary["per_item"]
+    labels = group_labels(per_item.index, per_item["sold"], lookup, group_by)
+    grouped = group_costs(per_item, labels, group_by)
     if grouped.empty:
         st.info("No cost data for this grouping.")
         return
 
-    fig = go.Figure(go.Bar(
-        x=grouped["total"], y=grouped["Group"], orientation="h",
-        marker=dict(color=[CLASS_COLORS.get(str(g).lower(), "#6366f1")
-                           for g in grouped["Group"]],
-                    line=dict(color="rgba(15,23,42,0.18)", width=1)),
-        text=[f"${v:,.0f}" for v in grouped["total"]], textposition="outside",
-        cliponaxis=False,
-        customdata=np.stack([grouped["holding"], grouped["stockout"], grouped["skus"],
-                             grouped["bought"], grouped["sold"], grouped["per_sku"]], axis=-1),
-        hovertemplate=(
-            "<b>%{y}</b> — $%{x:,.0f} total"
-            "<br>holding $%{customdata[0]:,.0f} · stockout $%{customdata[1]:,.0f}"
-            "<br>%{customdata[2]:,.0f} SKUs · bought %{customdata[3]:,.0f}"
-            " / sold %{customdata[4]:,.0f}<br>$%{customdata[5]:,.0f} per SKU<extra></extra>"),
-        showlegend=False))
-    fig.update_layout(template="plotly_white", height=max(230, 66 * len(grouped) + 70),
-                      margin=dict(l=10, r=80, t=10, b=10), bargap=0.4,
-                      xaxis_title="Total inventory cost over the 28-day holdout ($)",
-                      yaxis_title="")
+    accuracy = group_accuracy(preds, labels, model, truth_model(preds))
+    if not accuracy.empty:
+        grouped = grouped.merge(accuracy, on="Group", how="left")
+    else:
+        for column in ("MAE", "Bias %", "WRMSE", "WAPE %"):
+            grouped[column] = np.nan
 
-    plot_col, table_col = st.columns([1.5, 1])
+    # Clean executive table format focusing on actionable metrics
+    table = grouped[
+        [
+            "Group",
+            "skus",
+            "total",
+            "holding",
+            "stockout",
+            "bought",
+            "sold",
+            "Bias %",
+            "WAPE %",
+        ]
+    ].rename(
+        columns={
+            "skus": "SKUs",
+            "total": "Total $",
+            "holding": "Holding $",
+            "stockout": "Stockout $",
+            "bought": "Bought",
+            "sold": "Sold",
+            "Bias %": "Bias %",
+            "WAPE %": "WAPE %",
+        }
+    )
+
+    # Stacked Bar Chart: Holding vs Stockout Cost
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            name="Holding Cost",
+            y=grouped["Group"],
+            x=grouped["holding"],
+            orientation="h",
+            marker_color="#3b82f6",
+            hovertemplate="<b>%{y}</b><br>Holding: $%{x:,.0f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Stockout Cost",
+            y=grouped["Group"],
+            x=grouped["stockout"],
+            orientation="h",
+            marker_color="#ef4444",
+            hovertemplate="<b>%{y}</b><br>Stockout: $%{x:,.0f}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_white",
+        barmode="stack",
+        height=max(240, 60 * len(grouped) + 70),
+        margin=dict(l=10, r=30, t=10, b=10),
+        bargap=0.35,
+        xaxis_title="Inventory Cost Breakdown ($)",
+        yaxis_title="",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+        ),
+    )
+
+    plot_col, table_col = st.columns([1.1, 1.4])
     with plot_col:
         st.plotly_chart(fig, width="stretch")
     with table_col:
-        money = grouped[["total", "holding", "stockout", "per_sku"]].round(0)
-        st.dataframe(money.style.format("${:,.0f}"), width="stretch", hide_index=True)
+        styled = table.style.format(
+            {
+                "Total $": "${:,.0f}",
+                "Holding $": "${:,.0f}",
+                "Stockout $": "${:,.0f}",
+                "Bought": "{:,.0f}",
+                "Sold": "{:,.0f}",
+                "Bias %": "{:+.0f}%",
+                "WAPE %": "{:,.0f}%",
+            }
+        )
+        st.dataframe(styled, width="stretch", hide_index=True)
+
+    bought, sold = float(grouped["bought"].sum()), float(grouped["sold"].sum())
+    if sold > 0:
+        st.caption(
+            f"Across every group, the policy bought **{bought:,.0f}** units against "
+            f"**{sold:,.0f}** sold (**{bought / sold:.2f}x** ratio). "
+            f"Holding cost accounts for **{(summary['holding']/summary['total'])*100:.1f}%** of total cost."
+        )
+
 
 
 # ============================================================
 # Section 3 -- SKUs in detail
 # ============================================================
 
-def group_filters(lookup):
-    """Cascading Category -> Department -> Item pickers. Returns members + label."""
+def render_filter_bar(lookup):
+    """All six section-3 controls on one row: scope, lookback, policy timing.
+
+    One row of columns rather than stacked full-width boxes. Stacked, the scope
+    selectors and the horizon they describe end up in different parts of the
+    screen and push the plot below the fold; together, the selection that
+    produced the numbers stays visible while you read them.
+    """
     has_cat = "cat_id" in lookup.columns
     has_dept = "dept_id" in lookup.columns
-    cats = ["All"] + sorted(lookup["cat_id"].dropna().unique()) if has_cat else ["All"]
-    category = pick_filter("Category", cats, "g_cat")
+    scope_a, scope_b, scope_c, span_d, term_e, term_f = st.columns(6)
+
+    with scope_a:
+        cats = ["All"] + sorted(lookup["cat_id"].dropna().unique()) if has_cat else ["All"]
+        category = pick_filter("Category", cats, "g_cat")
     if changed("g_applied_cat", category):
         st.session_state.pop("g_dept", None)
         st.session_state.pop("g_item", None)
 
     scoped = lookup if category == "All" or not has_cat else lookup[lookup["cat_id"] == category]
-    depts = ["All"] + sorted(scoped["dept_id"].dropna().unique()) if has_dept else ["All"]
-    department = pick_filter("Department", depts, "g_dept")
+    with scope_b:
+        depts = ["All"] + sorted(scoped["dept_id"].dropna().unique()) if has_dept else ["All"]
+        department = pick_filter("Department", depts, "g_dept")
     if changed("g_applied_dept", department):
         st.session_state.pop("g_item", None)
 
     scoped = scoped if department == "All" or not has_dept else scoped[scoped["dept_id"] == department]
-    item = pick_filter("Item", ["All"] + sorted(scoped.index.tolist()), "g_item")
+    with scope_c:
+        item = pick_filter("Item", ["All"] + sorted(scoped.index.tolist()), "g_item")
+    with span_d:
+        lookback = pick_filter("History lookback", [f"{d}d" for d in LOOKBACKS], "g_lookback")
+    with term_e:
+        st.slider("Lead time (days)", LEAD_TIME, LEAD_TIME + 1, LEAD_TIME,
+                  disabled=True, key="w_lead")
+    with term_f:
+        st.slider("Review period (days)", REVIEW_PERIOD, REVIEW_PERIOD + 1, REVIEW_PERIOD,
+                  disabled=True, key="w_review")
 
     if item != "All":
-        return [item], item
-    if department != "All":
-        return scoped.index.tolist(), department
-    if category != "All":
-        return scoped.index.tolist(), category
-    return lookup.index.tolist(), f"All {len(lookup):,} SKUs"
-
-
-def render_policy_windows():
-    """Lead time and review period, read-only at the loaded run's values."""
-    left, right = st.columns(2)
-    left.slider("Lead time (days)", LEAD_TIME, LEAD_TIME + 1, LEAD_TIME,
-                disabled=True, key="w_lead")
-    right.slider("Review period (days)", REVIEW_PERIOD, REVIEW_PERIOD + 1, REVIEW_PERIOD,
-                 disabled=True, key="w_review")
-    st.caption(f"Risk period = {LEAD_TIME} + {REVIEW_PERIOD} = **{TAU} days**, locked.")
+        members, label = [item], item
+    elif department != "All":
+        members, label = scoped.index.tolist(), department
+    elif category != "All":
+        members, label = scoped.index.tolist(), category
+    else:
+        members, label = lookup.index.tolist(), f"All {len(lookup):,} SKUs"
+    return members, label, int(lookback.rstrip("d"))
 
 
 def line_trace(name, frame, value, color, width, hover=None, dash="solid", markers=False):
@@ -430,6 +700,87 @@ def line_trace(name, frame, value, color, width, hover=None, dash="solid", marke
         marker=dict(size=5) if markers else None,
         hovertemplate=template.replace("{name}", name))
 
+
+def daily_order_rate(daily, lead_time, review_period):
+    """Order quantity spread over the days it is actually meant to cover.
+
+    A review order covers a whole cycle, not a day: placed on day D it lands on
+    D + lead_time and has to hold the store through the next `review_period`
+    days. Plotted as one bar on a daily axis it therefore sits ~11x above a
+    typical day of sales, and reads as catastrophic over-buying when the cycle
+    only carries ~1.6x what it sells. Dividing it back out puts the order and the
+    sales line on the same per-day footing, so the gap left on screen is the
+    real one.
+    """
+    rates = pd.Series(0.0, index=pd.DatetimeIndex(daily["date"]))
+    for day, qty in zip(daily["date"], daily["order_qty"]):
+        if qty <= 0:
+            continue
+        start = day + pd.Timedelta(days=lead_time)
+        for offset in range(review_period):
+            covered = start + pd.Timedelta(days=offset)
+            if covered in rates.index:
+                rates.loc[covered] += qty / review_period
+    return rates.reset_index(drop=True)
+
+def build_inventory_figure(inv, members, policy_model):
+    """Right column plot: On-hand sawtooth, safety stock, and daily sales bars."""
+    fig = go.Figure()
+    daily = daily_inventory(inv, members, policy_model)
+
+    if daily.empty:
+        return fig
+
+    # Daily Sales Bars
+    fig.add_trace(
+        go.Bar(
+            x=daily["date"],
+            y=daily["actual_sales"],
+            name="Daily Sales",
+            marker_color="rgba(245, 158, 11, 0.35)",
+            hovertemplate="%{x|%b %d}<br>%{y:.0f} units sold<extra>Sales</extra>",
+        )
+    )
+
+    # On-Hand Inventory Line
+    fig.add_trace(
+        go.Scatter(
+            x=daily["date"],
+            y=daily["on_hand"],
+            mode="lines+markers",
+            name="On-Hand Inventory",
+            line=dict(color="#16a34a", width=2.5),
+            marker=dict(size=4),
+            hovertemplate="%{x|%b %d}<br>%{y:.0f} units on-hand<extra>On-Hand</extra>",
+        )
+    )
+
+    # Safety Stock Target Line
+    fig.add_trace(
+        go.Scatter(
+            x=daily["date"],
+            y=daily["safety_stock"],
+            mode="lines",
+            name="Safety Stock Target",
+            line=dict(color="#dc2626", width=1.5, dash="dot"),
+            hovertemplate="%{x|%b %d}<br>%{y:.0f} units SS<extra>Safety Stock</extra>",
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_white",
+        height=420,
+        margin=dict(l=10, r=10, t=25, b=10),
+        title="",
+        yaxis_title="Units",
+        xaxis_title="Date",
+        barmode="overlay",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+        ),
+        hovermode="x unified",
+    )
+    return fig
 
 def build_detail_figure(train, preds, inv, members, policy_model, compare, days):
     """Actual vs predicted for the selection, with the orders the policy placed."""
@@ -462,7 +813,7 @@ def build_detail_figure(train, preds, inv, members, policy_model, compare, days)
     ordered["risk_demand"] = [hover[d]["risk_demand"] for d in ordered["date"]]
     ordered["arrival"] = ordered["date"] + pd.Timedelta(days=LEAD_TIME)
     fig.add_trace(go.Bar(
-        x=ordered["date"], y=ordered["order_qty"], name="Order placed",
+        x=ordered["date"], y=ordered["order_qty"], name="Order placed (whole cycle)",
         marker_color="rgba(99,102,241,0.45)", marker_line=dict(color="#6366f1", width=1),
         width=ORDER_BAR_MS,
         customdata=ordered[["order_qty", "safety_stock", "order_up_to", "on_hand",
@@ -473,23 +824,30 @@ def build_detail_figure(train, preds, inv, members, policy_model, compare, days)
             "<br>on hand %{customdata[3]:.1f} · in transit %{customdata[4]:.1f}"
             f"<br>forecast ({TAU}d) %{{customdata[5]:.1f}}"
             "<br>arrives %{customdata[6]|%b %d}<extra></extra>")))
+
+    rate_frame = daily.copy()
+    rate_frame["order_rate"] = daily_order_rate(daily, LEAD_TIME, REVIEW_PERIOD)
+    fig.add_trace(line_trace(
+        "Order per day (cycle spread)", rate_frame, "order_rate", "#6366f1", 2,
+        "%{x|%b %d}<br>%{y:.0f} units/day<extra>Order per day</extra>", dash="dot"))
+
     fig.add_vrect(x0=daily["date"].min(), x1=daily["date"].max(),
                   fillcolor="#f1f5f9", opacity=0.55, layer="below", line_width=0)
     fig.update_layout(
         template="plotly_white", height=470, margin=dict(l=10, r=10, t=10, b=10),
-        yaxis_title="Units", xaxis_title="Date", barmode="overlay",
+        yaxis_title="Units per day", xaxis_title="Date", barmode="overlay",
         legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0),
         hovermode="x unified")
     return fig
 
 
-def accuracy_metrics(preds, members, model):
+def accuracy_metrics(preds, members, model, truth):
     """Error metrics for one model over the holdout, on the aggregated series."""
     frame = daily_sum(preds, members, model, "sales_pred")
-    truth = daily_sum(preds, members, "Naive", "real_sales")
-    if frame.empty or truth.empty:
+    truth_frame = daily_sum(preds, members, truth, "real_sales") if truth else pd.DataFrame()
+    if frame.empty or truth_frame.empty:
         return {}
-    merged = frame.merge(truth, on="date", how="inner")
+    merged = frame.merge(truth_frame, on="date", how="inner")
     if merged.empty:
         return {}
     actual = merged["real_sales"].to_numpy(dtype="float64")
@@ -507,8 +865,13 @@ def accuracy_metrics(preds, members, model):
 
 def render_metrics_line(preds, members, policy_model, compare):
     """One line of error metrics per model on the left, the winner on the right."""
+    truth = truth_model(preds)
+    if truth is None:
+        st.error("No model in the holdout carries `real_sales`, so there is no ground "
+                 "truth to score against. Re-run the test mode.")
+        return
     models = [policy_model, *[m for m in compare if m != policy_model]]
-    scored = {m: accuracy_metrics(preds, members, m) for m in models}
+    scored = {m: accuracy_metrics(preds, members, m, truth) for m in models}
     scored = {m: s for m, s in scored.items() if s}
     if not scored:
         st.info("No holdout metrics for this selection.")
@@ -595,18 +958,60 @@ def render_review_table(table):
                    "the order-up-to level; check the holding rate and the seed window.")
 
 
-def render_sku_detail(train, preds, inv, lookup, policy_model, compare):
-    """Section 3: group by, the aggregated plot, one metrics line, the review table."""
+def render_sku_detail(train, preds, inv, lookup, available):
+    """Section 3: model pickers, scope, the aggregated plot, metrics, review table."""
     st.markdown("### 3. SKUs in detail")
-    st.markdown("**Group by**")
-    members, label = group_filters(lookup)
-    st.caption(f"Showing **{label}** ({len(members):,} SKUs).")
-    render_policy_windows()
-    days = st.selectbox("History lookback", LOOKBACKS, index=2, key="g_lookback")
-    st.plotly_chart(build_detail_figure(train, preds, inv, members,
-                                        policy_model, compare, days), width="stretch")
-    render_metrics_line(preds, members, policy_model, compare)
+
+    policy_col, compare_col = st.columns(2)
+    with policy_col:
+        policy_model = st.selectbox(
+            "Policy model (drives replenishment)", available,
+            format_func=model_label, key="policy_model")
+    with compare_col:
+        compare = st.multiselect("Also show these forecasts",
+                                 [m for m in available if m != policy_model],
+                                 format_func=model_label, key="compare_models")
+
+    members, label, days = render_filter_bar(lookup)
+    # --- Toggle Switch Controls ---
+    show_inventory = st.toggle(
+        "Show Inventory Sawtooth & Performance Metrics",
+        value=False,
+        key="toggle_inventory_view",
+    )
+
+    if not show_inventory:
+        # Full-width Demand Plot View
+        st.caption(f"Showing **{label}** ({len(members):,} SKUs). Risk period = {LEAD_TIME} + "
+                    f"{REVIEW_PERIOD} = **{TAU} days**, locked to the loaded run.")
+        st.plotly_chart(build_detail_figure(train, preds, inv, members,
+                                                policy_model, compare, days), width="stretch")
+        st.caption("The order bars are a whole review cycle; the dotted line is that same order "
+                    "spread across the days it covers, which is the only one of the two that is "
+                    "comparable to a single day of sales.")
+        render_metrics_line(preds, members, policy_model, compare)
+
+
+    else:
+        # Full-width Inventory Plot & Aggregated Metrics View
+        st.plotly_chart(
+            build_inventory_figure(inv, members, policy_model), width="stretch"
+        )
+
+        st.markdown(f"#### Aggregated Inventory Performance (`{label}`)")
+        perf_df = evaluate_inventory_performance(
+            inv, members, policy_model, label
+        )
+
+        if not perf_df.empty:
+            st.dataframe(perf_df, width="stretch", hide_index=True)
+        else:
+            st.info("No inventory performance metrics for this selection.")
+
+    # Review-by-review decision log table below
+    st.divider()
     render_review_table(build_review_table(preds, inv, members, policy_model))
+    
 
 
 # ============================================================
@@ -623,9 +1028,11 @@ def render_notes(provenance):
                  f"`{implied:.4f}` (recovered from holding_cost / on_hand). Every dollar "
                  "figure here comes from the older configuration. Re-run the holdout "
                  "before quoting these to a client.")
-    if "quit()" in (BASE_DIR / "run_pipeline.py").read_text():
-        st.warning("**Stale artifact.** `run_pipeline.py` calls `quit()` before "
-                   "`to_parquet`, so the holdout cannot be regenerated until that is removed.")
+    if provenance["drift"]:
+        st.warning("**Stale artifacts.** `"
+                   + "`, `".join(provenance["drift"])
+                   + "` changed after this holdout was generated, so the code and the numbers "
+                   "on this page are out of step. Re-run the test mode before quoting these.")
     st.markdown(
         f"**How the policy computes it.** `S = D({TAU}d) + SS`; `D` is forecast demand "
         f"over lead time + review period and `SS = z * RMSE_tau` is RMSE of the "
@@ -654,7 +1061,7 @@ def main():
                 "[data-testid='stMetricValue']{font-size:1.4rem}</style>",
                 unsafe_allow_html=True)
 
-    art = load_artifacts()
+    art = load_artifacts(artifact_signature())
     train, preds, inv = art["train"], art["preds"], art["inv"]
     classes, provenance = art["classes"], art["provenance"]
     if preds.empty or inv.empty:
@@ -666,16 +1073,15 @@ def main():
     st.caption("Walmart M5 · store `CA_1` · 300 curated SKUs · periodic review")
 
     available = sorted(preds["model"].dropna().unique().tolist())
-    policy_col, compare_col = st.columns(2)
-    with policy_col:
-        policy_model = st.selectbox(
-            "Policy model (drives replenishment)", available,
-            index=available.index("lgbm") if "lgbm" in available else 0,
-            format_func=model_label, key="policy_model")
-    with compare_col:
-        compare = st.multiselect("Also show these forecasts",
-                                 [m for m in available if m != policy_model],
-                                 format_func=model_label, key="compare_models")
+    # The model pickers live in section 3, but sections 1 and 2 are scored under
+    # the chosen policy, and Streamlit only exposes a widget's value after the
+    # widget is created. Seeding both keys up front lets every section read the
+    # current choice on the same rerun, so nothing goes stale when they change.
+    st.session_state.setdefault("policy_model",
+                                "lgbm" if "lgbm" in available else (available[0] if available else None))
+    st.session_state.setdefault("compare_models", [])
+    st.session_state.setdefault("g_lookback", f"{LOOKBACKS[2]}d")
+    policy_model = st.session_state["policy_model"]
 
     lookup = item_lookup(classes, preds)
     summary = summarise(inv, policy_model)
@@ -694,10 +1100,10 @@ def main():
         render_sku_profile(classes, focus)
 
     st.divider()
-    render_where_money_goes(summary, lookup, policy_model)
+    render_where_money_goes(summary, lookup, preds, policy_model)
 
     st.divider()
-    render_sku_detail(train, preds, inv, lookup, policy_model, compare)
+    render_sku_detail(train, preds, inv, lookup, available)
 
     st.divider()
     render_notes(provenance)
