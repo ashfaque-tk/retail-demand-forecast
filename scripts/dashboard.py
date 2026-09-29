@@ -967,51 +967,99 @@ def render_notes(provenance):
 
 # ---------------------------------------------------------------- page
 def main():
-    st.set_page_config(page_title="Choosing a Demand Model for Store CA_1", layout="wide")
-    st.markdown("<style>.block-container{padding-top:2rem}[data-testid='stMetricValue']{font-size:1.4rem}</style>",
-                unsafe_allow_html=True)
+    # 1. Page Configuration & Custom CSS Injection
+    st.set_page_config(
+        page_title="Retail Demand Forecasting & Inventory Optimization",
+        layout="wide",
+    )
+    st.markdown(
+        """
+        <style>
+            .block-container { padding-top: 2rem; }
+            [data-testid='stMetricValue'] { font-size: 1.4rem; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 2. Artifact Loading & Verification
     art = load_artifacts(artifact_signature())
-    train, preds, inv, classes, provenance = (art[k] for k in ("train", "preds", "inv", "classes", "provenance"))
+    train, preds, inv, classes, provenance = (
+        art[k] for k in ("train", "preds", "inv", "classes", "provenance")
+    )
+
     if preds.empty or inv.empty:
-        st.error("No holdout artifacts in `results/tests/`. Remove the `quit()` in `run_pipeline.py` and re-run the "
-                 "test mode.")
+        st.error(
+            "No holdout artifacts in `results/tests/`. Remove the `quit()` in "
+            "`run_pipeline.py` and re-run the test mode."
+        )
         return
-    st.title("Choosing a Demand Model for Store CA_1")
-    st.caption("Walmart M5 · 300 curated SKUs · backtest + 28-day blind holdout · one fixed (s, S) replenishment "
-               "policy applied identically to every model")
+
+    # 3. Title & Header Framing
+    st.title("Retail Demand Forecasting & Inventory Optimization")
+    st.caption(
+        "Walmart M5 · 300 curated SKUs · backtest + 28-day blind holdout · "
+        "one fixed (s, S) replenishment policy applied identically to every model"
+    )
+
+    # 4. Session State & Model Selection Initialization
     available = sorted(preds["model"].dropna().unique().tolist())
     inv_models = [m for m in available if m in set(inv["model"].dropna())] or available
-    st.session_state.setdefault("policy_model", "lgbm" if "lgbm" in available else (available[0] if available else None))
+
+    st.session_state.setdefault(
+        "policy_model", "lgbm" if "lgbm" in available else (available[0] if available else None)
+    )
     st.session_state.setdefault("compare_models", [])
     st.session_state.setdefault("g_lookback", f"{LOOKBACKS[2]}d")
-    policy_model, lookup = st.session_state["policy_model"], item_lookup(classes, preds)
+
+    policy_model = st.session_state["policy_model"]
+    lookup = item_lookup(classes, preds)
+
+    # 5. Inventory Summary & Baseline Comparison
     summary = summarise(inv, policy_model)
     if not summary:
-        st.info("No inventory log for that policy model.")
+        st.info("No inventory log available for the selected policy model.")
         return
+
     unit_cost = unit_costs(train)
     baseline_name = REFERENCE_MODEL if REFERENCE_MODEL in inv["model"].values else None
-    baseline_summary = summarise(inv, baseline_name) if baseline_name and baseline_name != policy_model else None
+    baseline_summary = (
+        summarise(inv, baseline_name)
+        if baseline_name and baseline_name != policy_model
+        else None
+    )
     members = lookup.index.tolist()
+
+    # 6. Executive KPI Value Cards
     render_value_cards(summary, baseline_summary, inv, unit_cost, members, policy_model)
     st.divider()
+
+    # 7. Section 1: Executive Framing & Demand Taxonomy Profile
     st.markdown("### 1. What Was Compared, and What It Cost")
     framing, profile = st.columns([1.1, 1.3])
+
     with framing:
-        # Replace lines 983-984 with:
         render_business_framing(
             summary=summary,
             reference_summary=baseline_summary,
             fill_rate=service_profile(scoped(inv, members, policy_model)).get("fill", 100.0),
-            n_models=len(inv_models)
+            n_models=len(inv_models),
         )
+
     with profile:
         render_sku_profile(classes, inv, members, policy_model)
+
     st.divider()
+
+    # 8. Section 2: Portfolio Capital Allocation & Cost Drivers
     render_where_money_goes(lookup, preds, inv, unit_cost, inv_models, policy_model)
     st.divider()
+
+    # 9. Section 3: Item-Level Policy Replay & Sawtooth Deep Dive
     render_sku_detail(train, preds, inv, lookup, unit_cost, available)
     st.divider()
+
+    # 10. Audit Notes & Pipeline Provenance
     render_notes(provenance)
 
 if __name__ == "__main__":
