@@ -997,9 +997,9 @@ def main():
 
     # 3. Title & Header Framing
     st.title("Retail Demand Forecasting & Inventory Optimization")
-    st.caption(
+    st.caption("Turning demand forecasts into replenishment decisions and inventory-cost trade-offs"
         "Walmart M5 · 300 curated SKUs · backtest + 28-day blind holdout · "
-        "one fixed (s, S) replenishment policy applied identically to every model"
+        
     )
 
     # 4. Session State & Model Selection Initialization
