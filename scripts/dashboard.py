@@ -50,14 +50,29 @@ GOOD, BAD, AMBER = "#16a34a", "#dc2626", "#b45309"
 GROUP_COLUMNS = ["Group", "skus", "total", "vs Base $", "Saving %", "holding", "stockout", "bought", "sold", "Bias %", "WAPE %"]
 GROUP_HEADERS = {"skus": "SKUs", "total": "Total $", "vs Base $": "vs Baseline $", "Saving %": "Savings %",
                  "holding": "Holding $", "stockout": "Stockout $", "bought": "Bought", "sold": "Sold"}
-GROUP_FORMATS = {"Total $": "${:,.0f}", "vs Baseline $": "${:+,.0f}", "Savings %": "{:+.0f}%", "Holding $": "${:,.0f}",
-                 "Stockout $": "${:,.0f}", "Bought": "{:,.0f}", "Sold": "{:,.0f}", "Bias %": "{:+.0f}%", "WAPE %": "{:,.0f}%"}
+GROUP_FORMATS = {
+    "Total $": "${:,.0f}",
+    "vs Baseline $": "${:+,.0f}",
+    "Savings %": "{:+.0f}%",
+    "Holding $": "${:,.0f}",
+    "Stockout $": "${:,.0f}",
+    "Bought": "{:,.0f}",
+    "Sold": "{:,.0f}",
+    "Bias %": "{:+.1f}%",
+    "WAPE %": "{:.1f}%"
+}
 GROUPING_COLUMN = {"Demand class": "class", "Category": "cat_id", "Department": "dept_id"}
 SCORECARD_COLUMNS = ["label", "total", "holding", "stockout", "fill", "WAPE %", "Bias %", "MAE/day"]
 SCORECARD_HEADERS = {"label": "Model", "fill": "Fill %", "MAE/day": "MAE (units/day)"}
-SCORECARD_FORMATS = {"total": "${:,.0f}", "holding": "${:,.0f}", "stockout": "${:,.0f}", "fill": "{:.1f}%",
-                     "WAPE %": "{:.0f}%", "Bias %": "{:+.0f}%", "MAE/day": "{:.2f}"}
-
+SCORECARD_FORMATS = {
+    "total": "${:,.0f}",
+    "holding": "${:,.0f}",
+    "stockout": "${:,.0f}",
+    "fill": "{:.1f}%",
+    "WAPE %": "{:.1f}%",
+    "Bias %": "{:+.1f}%",
+    "MAE/day": "{:.2f}"
+}
 def model_label(name):
     """'lgbm' -> 'LightGBM (Direct)'; handles list-valued cells."""
     if not isinstance(name, str):
@@ -309,8 +324,8 @@ def render_business_framing(summary, reference_summary, fill_rate, n_models):
         f"**{SERVICE_TARGET:.1%}**, σ_error is the out-of-sample forecast error, and **τ = {TAU} days** is the "
         f"risk period.\n\n"
         f"At each review cycle, the policy replenishes:\n\n**Q = max(0, S − IP)**\n\n"
-        f"based on inventory position and realised demand, with **\${HOLDING_RATE:.2f}/unit/day holding cost** and "
-        f"**\${STOCKOUT_RATE:g} per lost unit**.\n\n"
+        fr"based on inventory position and realised demand, with **\${HOLDING_RATE:.2f}/unit/day holding cost** and "
+        fr"**\${STOCKOUT_RATE:g} per lost unit**.\n\n"
         "The policy itself is **not optimized** in this experiment. Only the forecast changes between runs.")
     if not reference_summary or reference_summary.get("total", 0) <= 0:
         return
@@ -503,7 +518,7 @@ def scorecard_table(scorecard, reference):
                    "WAPE %", "Bias %", "MAE/day"]
         headers = {"label": "Model", "vs Reference $": f"vs {model_label(reference)} $",
                    "MAE/day": "MAE (units/day)"}
-        formats = {**SCORECARD_FORMATS, "vs Reference $": "${:+,.0f}", "Saving %": "{:+.0f}%"}
+        formats = {**SCORECARD_FORMATS, headers["vs Reference $"]: "${:+,.0f}", "Saving %": "{:+.1f}%"}
         return frame[columns].rename(columns=headers).style.format(formats, na_rep="--") \
             .map(bias_highlight, subset=["Bias %"])
     return frame[SCORECARD_COLUMNS].rename(columns=SCORECARD_HEADERS).style.format(
@@ -553,13 +568,16 @@ def render_where_money_goes(lookup, preds, inv, unit_cost, models, default_model
     compared against itself -- that case read as a table of zeros rather than as "no difference".
     """
     st.markdown("### 2. Model Breakdown")
-    filter_col, _ = st.columns([1, 4])
-    with filter_col:
+    model_col, reference_col, group_col, low_col = st.columns([1.2, 1.2, 1.2, 1.4])
+    with model_col:
         model = pick_filter("Model in view", models, "cost_model", model_label, default_model)
-        choices = [m for m in models if m != model]
+    choices = [m for m in models if m != model]
+    with reference_col:
         reference = pick_filter("Compare against", choices, "cost_reference", model_label,
                                 REFERENCE_MODEL if REFERENCE_MODEL in choices else (choices[0] if choices else None))
+    with group_col:
         group_by = pick_filter("Break down by", ["All models", *COST_GROUPS], "cost_group")
+    with low_col:
         low_only = st.toggle(f"Low-volume SKUs only (< {LOW_VOLUME} units/mo)", value=False, key="cost_low_volume")
     summary = summarise(inv, model)
     if not summary or not choices:
