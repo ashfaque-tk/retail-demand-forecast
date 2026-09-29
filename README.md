@@ -42,10 +42,10 @@ flowchart LR
     G --> H["Forecast + Inventory Evaluation"]
 
     H --> I["JSON / HTML Reports"]
-    I --> L ["Evaluation"]
-    H --> P ["Parquet files"]
-    H --> J [("PostgreSQL")]
-    P --> O ["Dashboard"]
+    I --> L["Evaluation"]
+    H --> P["Parquet files"]
+    H --> J[("PostgreSQL")]
+    P --> O["Dashboard"]
 
     J --> K["FastAPI"]
     K --> R["External User"]
