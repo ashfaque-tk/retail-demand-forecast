@@ -251,28 +251,27 @@ The endpoint returns:
 
 The API currently serves persisted results; model training and forecast generation are performed separately by the forecasting pipeline.
 
+# Diagnostic Findings, System Limitations & Roadmap
+
+## Key Diagnostic Finding
+Holding costs account for ~97% of total portfolio cost because standard ML models over-forecast sparse long-tail demand, and summing daily 85th-percentile quantiles across the review window severely inflates safety stock.
+
 ---
 
-## Current Limitations
+## Future Roadmap & Strategic Next Steps
 
-### Direct forecasting memory requirements
+* **Direct Horizon Forecasting:** Transition from daily point predictions to forecasting cumulative demand over the full risk horizon ($L+R$). Using a sliding window preserves sample size while smoothing zero-inflation and outputting exact Reorder Points (ROP) via direct quantile regression.
+* **Differentiated Inventory Policies:** Move away from uniform safety stock rules by implementing specialized intermittent strategies (e.g., Croston SBA or Min-Max ROP triggers) for slow movers, reserving ML point forecasts for high-velocity SKUs.
+* **Pipeline Generalization:** Decouple hardcoded M5 column references into a centralized schema config to make the end-to-end framework portable across arbitrary retail datasets.
 
-* Direct multi-horizon training creates up to 28 forecast rows per historical origin, substantially increasing training-data size and memory requirements. With 300 SKUs, the current implementation is feasible on local hardware but becomes increasingly expensive as SKU coverage increases.
-
-### Limited benchmark scale
-
-* The current benchmark intentionally uses 300 curated SKUs rather than the complete M5 panel. Scaling the same implementation beyond this scope will require more efficient feature generation and training.
-
-* The current benchmark uses SKUs with complete historical coverage. Cold starts, partial histories, product launches, and product exits are not yet evaluated.
-
-* The core orchestration logic is entirely dataset-agnostic, though the current code uses fixed M5 column names for initial setup. Moving these hardcoded references into a central schema config will fully parameterize the pipeline, making it easy to plug in and run on any standard retail dataset.
 ---
 
-## Future Work
-* Inventory optimization layer with multiple policies
-* Evaluate MLForecast or an equivalent optimized forecasting implementation
-* Improve feature-generation efficiency
-* Extend the pipeline beyond the current 300-SKU benchmark
+## System Limitations
+
+* **Scale & Memory:** Direct multi-horizon target generation increases dataset size per historical origin. While efficient for 300 SKUs, scaling requires optimized feature pipelines and memory management.
+* **Scope:** The benchmark currently assumes full historical coverage and does not evaluate cold starts, product launches, or SKU exits.
+
+---
 
 ### V3 production-style simulation
 
