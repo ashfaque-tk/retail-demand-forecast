@@ -60,7 +60,7 @@ All model features are created through a central feature-engineering class befor
 
 Features include:
 
-* Demand lags
+* Demand lags (strictly done on t-1 to avoid leakage)
 * Rolling statistics
 * Calendar variables
 * Events and SNAP indicators
@@ -76,14 +76,16 @@ Feature construction is designed to preserve temporal causality. Features used a
 
 Predicts one day at a time. Each prediction becomes available as an input when generating subsequent forecasts, allowing lag and rolling features to evolve through the forecast horizon.
 
-**Direct LightGBM**
+**Multi-Horizon Direct LightGBM**
 
-Trains the forecasting problem across the 28-day horizon so that each future horizon is predicted without feeding previous model predictions back into the feature set.
+Trains the forecasting problem across the 28-day horizon so that each future horizon is predicted without feeding previous model predictions back into the feature set. Used a 7 day stride to create origin dates to reduce the computational bottleneck.
 
 **Operational baselines**
 
 * Seasonal naive
 * Trailing moving average
+* Seasonal Moving Average (More stronger baseline)
+* Croston & Croston SBA (since data contains extremely intermittent SKUs. But found out to be least performing since the parameters are driven by smooth SKUs)
 
 The baselines provide reference points for both forecast accuracy and downstream inventory performance.
 
@@ -111,19 +113,20 @@ A model winning historical backtests does not automatically imply that it should
 ### Forecast metrics
 
 * **WRMSSE** — primary forecast-accuracy metric
-* **MAE** — interpretable absolute error
+* **WAPE**   - 
+* **MAE** — interpretable absolute error 
 * **Bias** — systematic over- or under-forecasting
-* **Cumulative forecast error**
+* **Cumulative forecast error** and **Cumulative bias** : over the risk period
 * **Forecast Value Added (FVA)** relative to operational baselines
 
 ### Inventory metrics
 
 The forecasting evaluation is complemented by a periodic-review inventory simulation using:
-
-* Lead time
-* Review period
+This layer is fixed and not optimized with different policies. 
+* Lead time (fixed)
+* Review period (fixed)
 * Forecasted demand over the risk period
-* Error-based safety stock
+* Error-based safety stock 
 * Order-up-to levels
 * Holding cost
 * Stockout cost
@@ -143,26 +146,32 @@ After thorough walk-forward backtesting and model selection, the selected candid
 
 | Metric | LGBM Direct |
 |---|---:|
-| MAE | **1.0816** |
-| BIAS% | **-3.14%** |
-| WRMSSE | **0.8302** |
-| Cumulative MAE | **5.3905** |
-| Cumulative Bias | **-0.4042** |
-| Average total inventory cost | **$3,830.00** |
+| MAE | **1.0880** |
+| BIAS% | **-2.61%** |
+| WRMSSE | **0.8435** |
+| Cumulative MAE | **5.4316** |
+| Cumulative Bias | **-0.336** |
+| Total inventory cost | **$16,479** |
 
 ### Business impact
+Cost Savings with Other Models:
+
+Total costs in this portfolio are predominantly driven by inventory holding expenses rather than stockouts—even under balanced cost parameters (**holding cost per unit = 0.2; stockout penalty factor = 1.0**). This stems from the complexity of predicting demand across highly diverse SKUs with a pronounced long tail. Across both statistical baselines and advanced machine learning models, algorithms consistently exhibit an upward forecasting bias when attempting to capture sparse long-tail demand.
 
 | Comparison | Cost Difference | FVA |
 |---|---:|---:|
-| Moving Average | **$614.88 lower** | **13.83%** |
-| Seasonal Naive | **$534.93 lower** | **12.26%** |
+| Moving Average | **$1136 lower** | **6.45%** |
+| Seasonal Moving Average | **$1601 lower** | **8.86%**|
+| Seasonal Naive | **$2144 lower** | **11.52%** |
+| Croston SBA | **$2220 lower** | **11.88%** |
+| Croston | **$3085 lower** | **15.77%** |
 
 The holdout therefore provides the current evidence used for the deployment decision. It should not be interpreted as a guarantee of future production performance.
 
 ## Inventory Simulation
 
 The inventory component uses a **periodic-review replenishment policy**.
-
+* **Note**: The current policy applies standardized holding and stockout costs across all SKUs to determine safety stock levels. A key outcome of this analysis reveals that adopting segment-specific inventory policies—particularly specialized strategies for long-tail and intermittent items—will unlock further high-impact cost savings beyond the baseline projections.
 At each review point, the system calculates the inventory decision using the forecast and current inventory state:
 
 ```text
@@ -248,37 +257,20 @@ The API currently serves persisted results; model training and forecast generati
 
 ### Direct forecasting memory requirements
 
-Direct multi-horizon training creates up to 28 forecast rows per historical origin, substantially increasing training-data size and memory requirements.
-
-With 300 SKUs, the current implementation is feasible on local hardware but becomes increasingly expensive as SKU coverage increases.
+* Direct multi-horizon training creates up to 28 forecast rows per historical origin, substantially increasing training-data size and memory requirements. With 300 SKUs, the current implementation is feasible on local hardware but becomes increasingly expensive as SKU coverage increases.
 
 ### Limited benchmark scale
 
-The current benchmark intentionally uses 300 curated SKUs rather than the complete M5 panel. Scaling the same implementation beyond this scope will require more efficient feature generation and training.
+* The current benchmark intentionally uses 300 curated SKUs rather than the complete M5 panel. Scaling the same implementation beyond this scope will require more efficient feature generation and training.
 
-### Limited lifecycle coverage
+* The current benchmark uses SKUs with complete historical coverage. Cold starts, partial histories, product launches, and product exits are not yet evaluated.
 
-The current benchmark uses SKUs with complete historical coverage. Cold starts, partial histories, product launches, and product exits are not yet evaluated.
-
+* The core orchestration logic is entirely dataset-agnostic, though the current code uses fixed M5 column names for initial setup. Moving these hardcoded references into a central schema config will fully parameterize the pipeline, making it easy to plug in and run on any standard retail dataset.
 ---
 
 ## Future Work
-
-
-
-### 1. Stronger forecasting baselines
-
-Evaluate additional methods before making deployment decisions:
-
-* Seasonal moving averages
-* Exponential smoothing / ETS
-* Croston and related intermittent-demand methods
-* Other lightweight statistical benchmarks
-
-### 2. Performance and scalability
-
+* Inventory optimization layer with multiple policies
 * Evaluate MLForecast or an equivalent optimized forecasting implementation
-* Reduce direct-model training memory requirements
 * Improve feature-generation efficiency
 * Extend the pipeline beyond the current 300-SKU benchmark
 
@@ -318,7 +310,7 @@ uv run python run_pipeline.py \
 
 ## Primary Evaluation Principle
 
-**WRMSSE is the primary forecast-accuracy metric**, complemented by MAE, bias, FVA, and downstream inventory measures.
+**WRMSSE is the primary forecast-accuracy metric**, complemented by WAPE, cumulative MAE and BIAS, FVA, and downstream inventory measures.
 
 The project treats forecasting as the first stage of a broader decision pipeline:
 
