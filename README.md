@@ -10,6 +10,7 @@ This project uses Walmart's **M5 Forecasting** dataset from store `CA_1` to eval
 
 The system covers centralized feature engineering, recursive and direct forecasting, walk-forward validation, automated experiment comparison, error-based replenishment simulation, PostgreSQL persistence, and FastAPI serving.
 
+For detailed dashboard: https://demand-forecast-inventory.streamlit.app/
 ---
 
 ## Dataset Scope
