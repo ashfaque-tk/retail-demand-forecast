@@ -229,12 +229,11 @@ def service_profile(subset):
     per_item = subset.groupby("item_id", observed=True).agg(
         on_hand=("on_hand", "mean"), sold=("actual_sales", "sum"),
         holding=("holding_cost", "sum"), stockout=("stockout_cost", "sum"), days=("date", "nunique"))
-    sold = float(per_item["sold"].sum())
+    demand = float(per_item["sold"].sum())
     lost = float(subset["lost_sales"].sum()) if "lost_sales" in subset.columns else 0.0
-    demand = sold + lost  # `actual_sales` is what the shelf gave out, not what was asked for
     rate = (per_item["sold"] / per_item["days"]).replace(0, np.nan)
-    return {"skus": len(per_item), "demand": demand, "sold": sold, "lost": lost,
-            "fill": sold / demand * 100.0 if demand > 0 else 100.0,
+    return {"skus": len(per_item), "demand": demand, "lost": lost,
+            "fill": (demand - lost) / demand * 100.0 if demand > 0 else 100.0,
             "dos": float((per_item["on_hand"] / rate).mean()) if rate.notna().any() else np.nan,
             "holding": float(per_item["holding"].sum()), "stockout": float(per_item["stockout"].sum())}
 
@@ -310,12 +309,12 @@ def render_business_framing(summary, reference_summary, fill_rate, n_models):
         f"**{SERVICE_TARGET:.1%}**, σ_error is the out-of-sample forecast error, and **τ = {TAU} days** is the "
         f"risk period.\n\n"
         f"At each review cycle, the policy replenishes:\n\n**Q = max(0, S − IP)**\n\n"
-        f"based on inventory position and realised demand, with **${HOLDING_RATE:.2f}/unit/day holding cost** and "
-        f"**${STOCKOUT_RATE:g} per lost unit**.\n\n"
+        f"based on inventory position and realised demand, with **\${HOLDING_RATE:.2f}/unit/day holding cost** and "
+        f"**\${STOCKOUT_RATE:g} per lost unit**.\n\n"
         "The policy itself is **not optimized** in this experiment. Only the forecast changes between runs.")
     if not reference_summary or reference_summary.get("total", 0) <= 0:
         return
-    st.markdown("#### The Bottom Line")
+    st.markdown("#### The Findings")
     st.markdown(
         f"Against **{model_label(REFERENCE_MODEL)}**, using the same assortment and the same inventory policy:\n\n"
         f"- **Total cost:** ${summary['total']:,.0f} vs. ${reference_summary['total']:,.0f}\n"
@@ -554,16 +553,13 @@ def render_where_money_goes(lookup, preds, inv, unit_cost, models, default_model
     compared against itself -- that case read as a table of zeros rather than as "no difference".
     """
     st.markdown("### 2. Model Breakdown")
-    model_col, reference_col, group_col, low_col = st.columns([1.2, 1.2, 1.2, 1.4])
-    with model_col:
+    filter_col, _ = st.columns([1, 4])
+    with filter_col:
         model = pick_filter("Model in view", models, "cost_model", model_label, default_model)
-    choices = [m for m in models if m != model]
-    with reference_col:
+        choices = [m for m in models if m != model]
         reference = pick_filter("Compare against", choices, "cost_reference", model_label,
                                 REFERENCE_MODEL if REFERENCE_MODEL in choices else (choices[0] if choices else None))
-    with group_col:
         group_by = pick_filter("Break down by", ["All models", *COST_GROUPS], "cost_group")
-    with low_col:
         low_only = st.toggle(f"Low-volume SKUs only (< {LOW_VOLUME} units/mo)", value=False, key="cost_low_volume")
     summary = summarise(inv, model)
     if not summary or not choices:
@@ -905,7 +901,7 @@ def render_sku_detail(train, preds, inv, lookup, unit_cost, available):
     render_review_table(preds, inv, members, policy_model)
 
 # ---------------------------------------------------------------- notes
-def render_notes(provenance, holding_share):
+def render_notes(provenance):
     """System health, policy mechanics, and the audit trail, behind one disclosure."""
     with st.expander("🛠️ System Health, Provenance & Audit Trail", expanded=False):
         implied, has_issue = provenance["implied_rate"], False
@@ -937,9 +933,9 @@ def render_notes(provenance, holding_share):
             st.markdown(f"- **What this run does not claim**: the replenishment policy was held fixed and identical for "
                         f"every model. No search was run over service targets, buffer sizes or cost rates, so the "
                         f"numbers rank forecasts under one policy -- they are not the cost of a tuned policy. At "
-                        f"{HOLDING_RATE:g}/unit/day against a {STOCKOUT_RATE:g}/lost unit, holding dominates the bill: "
-                        f"**{holding_share:.0f}% of the cost this run charged is carrying stock**, not failing to sell "
-                        f"it.\n"
+                        f"{HOLDING_RATE:g}/unit/day against a {STOCKOUT_RATE:g}/lost unit, holding dominates the bill, "
+                        f"and {100 * SERVICE_TARGET / (SERVICE_TARGET + 1):.0f}% of the cost is carrying stock rather "
+                        f"than failing to sell it.\n"
                         f"- **The untested lever**: safety stock is the only dial that was never turned. Recalibrating "
                         f"σ_error as a rolling empirical error (out-of-sample only) and re-running the holdout at 95% "
                         f"and 99% service, then comparing the Buffer Ratio and holding-cost columns in section 3, would "
@@ -953,7 +949,7 @@ def render_notes(provenance, holding_share):
 
 # ---------------------------------------------------------------- page
 def main():
-    st.set_page_config(page_title="Retail Demand Forecasting & Inventory Optimization", layout="wide")
+    st.set_page_config(page_title="Choosing a Demand Model for Store CA_1", layout="wide")
     st.markdown("<style>.block-container{padding-top:2rem}[data-testid='stMetricValue']{font-size:1.4rem}</style>",
                 unsafe_allow_html=True)
     art = load_artifacts(artifact_signature())
@@ -962,10 +958,9 @@ def main():
         st.error("No holdout artifacts in `results/tests/`. Remove the `quit()` in `run_pipeline.py` and re-run the "
                  "test mode.")
         return
-    st.title("Retail Demand Forecasting & Inventory Optimization")
-    st.markdown("Turning demand forecasts into replenishment decisions and inventory-cost trade-offs")
-    st.markdown("This dashboard evaluates demand forecasting models not only by forecast accuracy, but by their "
-                "downstream impact on safety stock, replenishment decisions, holding costs, and stockout costs.")
+    st.title("Choosing a Demand Model for Store CA_1")
+    st.caption("Walmart M5 · 300 curated SKUs · backtest + 28-day blind holdout · one fixed (s, S) replenishment "
+               "policy applied identically to every model")
     available = sorted(preds["model"].dropna().unique().tolist())
     inv_models = [m for m in available if m in set(inv["model"].dropna())] or available
     st.session_state.setdefault("policy_model", "lgbm" if "lgbm" in available else (available[0] if available else None))
@@ -985,9 +980,13 @@ def main():
     st.markdown("### 1. What Was Compared, and What It Cost")
     framing, profile = st.columns([1.1, 1.3])
     with framing:
-        render_business_framing(summary, baseline_summary,
-                                service_profile(scoped(inv, members, policy_model)).get("fill", 100.0),
-                                len(available))
+        # Replace lines 983-984 with:
+        render_business_framing(
+            summary=summary,
+            reference_summary=baseline_summary,
+            fill_rate=service_profile(scoped(inv, members, policy_model)).get("fill", 100.0),
+            n_models=len(inv_models)
+        )
     with profile:
         render_sku_profile(classes, inv, members, policy_model)
     st.divider()
@@ -995,7 +994,7 @@ def main():
     st.divider()
     render_sku_detail(train, preds, inv, lookup, unit_cost, available)
     st.divider()
-    render_notes(provenance, 100 * summary["holding"] / max(summary["total"], 1e-9))
+    render_notes(provenance)
 
 if __name__ == "__main__":
     main()
