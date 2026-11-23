@@ -1,27 +1,45 @@
-# Optimizing Retail Inventory & Demand Risk: A Walmart M5 Case Study
+# Probabilistic Demand Forecasting for Inventory Decisions: A Walmart M5 Case Study
 
 > **Core Business Questions**
 >
-> * How accurately can we forecast 28-day demand for a curated set of 300 SKUs with different sales-volume and activity patterns?
-> * How can temporal forecast errors be translated into practical safety-stock and replenishment decisions?
-> * Which forecasting approach provides a useful balance between predictive accuracy and downstream inventory performance?
+> * How well can we forecast not just the expected 28-day demand, but the full **range of likely demand**, for 300 SKUs with very different volume and intermittency patterns?
+> * How can a probabilistic forecast be turned into safety-stock and order-up-to levels that hit a target service level?
+> * Does modelling uncertainty directly lead to lower inventory cost than adding an error buffer to a point forecast?
 
-This project uses Walmart's **M5 Forecasting** dataset from store `CA_1` to evaluate machine-learning forecasts against operational baselines and connect forecast performance to inventory decisions.
+This project uses Walmart's **M5 Forecasting** dataset (store `CA_1`) to build a probabilistic forecasting and replenishment pipeline. A LightGBM model produces **quantile forecasts** for each SKU and day. Those daily quantiles are combined by **Monte Carlo simulation** into a distribution of demand over the replenishment risk period, and the safety stock is read directly from that distribution at the target service level.
 
-The system covers centralized feature engineering, recursive and direct forecasting, walk-forward validation, automated experiment comparison, error-based replenishment simulation, PostgreSQL persistence, and FastAPI serving.
+The system covers centralized feature engineering, direct multi-horizon quantile forecasting, walk-forward validation, simulation-based safety stock, a periodic-review inventory simulation, PostgreSQL persistence, and FastAPI serving.
 
-For detailed dashboard: https://demand-forecast-inventory.streamlit.app/
+Dashboard: https://demand-forecast-inventory.streamlit.app/
+
+---
+
+## Why Probabilistic?
+
+Inventory decisions are made on the **tail of demand**, not its average. A point forecast says "we expect 3 units"; a replenishment decision has to answer "how much stock do we need so that we run out on fewer than X% of cycles?"
+
+The earlier version of this project (v1) answered that with a point forecast plus a safety stock scaled by historical RMSE. That approach assumes forecast errors are roughly symmetric and similar across SKUs, which does not hold for a retail portfolio where many items sell zero on most days and occasionally spike.
+
+The current version (v2) forecasts the demand distribution directly:
+
+| | v1: Point + RMSE | v2: Probabilistic |
+|---|---|---|
+| Model output | One value per SKU-day | A set of quantiles per SKU-day |
+| Uncertainty | Historical RMSE, symmetric | Learned per SKU, day and context; asymmetric |
+| Intermittent SKUs | Normal-style buffer, often too large | Distribution can be skewed and bounded at zero |
+| Risk-period demand | Sum of point forecasts + buffer | Simulated distribution of total demand |
+| Safety stock | z × RMSE-based term | Quantile of simulated demand − expected demand |
+
 ---
 
 ## Dataset Scope
 
 * **300 curated SKUs** from the `FOODS`, `HOBBIES`, and `HOUSEHOLD` departments.
-* SKUs are stratified by revenue and sales frequency to cover different demand-volume and activity patterns.
-* All 300 SKUs have a complete three-year training history and continue into the evaluation period.
+* SKUs are stratified by revenue and sales frequency, so the set includes fast movers, slow movers and highly intermittent items.
+* All 300 SKUs have a complete three-year history and continue into the evaluation period. The current model is trained on the **most recent 1 year**.
 * The full-history design avoids missing-SKU issues in out-of-sample forecast and inventory evaluation.
 
-**Current limitation:** the benchmark does not yet evaluate cold starts, partial histories, late product launches, or product exits. The remaining future data is reserved for the v3 production-style simulation.
-
+**Current limitation:** cold starts, partial histories, product launches and exits are not yet evaluated. The remaining future data is reserved for the v3 production-style simulation.
 
 ---
 
@@ -30,28 +48,27 @@ For detailed dashboard: https://demand-forecast-inventory.streamlit.app/
 ```mermaid
 flowchart LR
     A["M5 Data<br/>300 SKUs"] --> B["Feature Engineering"]
-    B --> C["Walk-Forward Backtesting"]
+    B --> C["Quantile LightGBM<br/>(Direct, 28 days)"]
+    C --> D["Walk-Forward Backtesting"]
 
-    C --> D["Forecast Evaluation"]
-    C --> E["Inventory Evaluation"]
+    D --> E["Forecast Evaluation<br/>(point + quantile)"]
+    D --> F["Monte Carlo<br/>Risk-Period Demand"]
+    F --> G["Safety Stock &<br/>Order-Up-To"]
+    G --> H["Inventory Simulation"]
 
-    D --> F["Model Selection"]
-    E --> F
+    E --> I["Model & Policy Selection"]
+    H --> I
 
-    F --> G["Holdout Test"]
-    G --> H["Forecast + Inventory Evaluation"]
-
-    H --> I["JSON / HTML Reports"]
-    I --> L["Evaluation"]
-    H --> P["Parquet files"]
-    H --> J[("PostgreSQL")]
+    I --> J["Holdout Test"]
+    J --> K["JSON / HTML Reports"]
+    J --> P["Parquet files"]
+    J --> Q[("PostgreSQL")]
     P --> O["Dashboard"]
-
-    J --> K["FastAPI"]
-    K --> R["External User"]
+    Q --> R["FastAPI"]
+    R --> S["External User"]
 
     M["Future Data"] -.-> N["V3 Production Simulation"]
-    N -.-> J
+    N -.-> Q
 ```
 
 ---
@@ -60,11 +77,9 @@ flowchart LR
 
 ### Centralized feature engineering
 
-All model features are created through a central feature-engineering class before training.
+All model features are created through a central feature-engineering class before training:
 
-Features include:
-
-* Demand lags (strictly done on t-1 to avoid leakage)
+* Demand lags (computed strictly from t-1 and earlier to avoid leakage)
 * Rolling statistics
 * Calendar variables
 * Events and SNAP indicators
@@ -72,134 +87,216 @@ Features include:
 * Trend features
 * SKU-level information
 
-Feature construction is designed to preserve temporal causality. Features used at a forecast origin are derived only from information available at that point, with recursive predictions used where required.
+Features at a forecast origin use only information available at that origin.
 
-### Forecasting approaches
+### Direct multi-horizon quantile LightGBM
 
-**Recursive LightGBM**
+The model is trained across the full 28-day horizon so that each future day is predicted without feeding earlier predictions back in as features. Origin dates are created with a 7-day stride to keep training size manageable.
 
-Predicts one day at a time. Each prediction becomes available as an input when generating subsequent forecasts, allowing lag and rolling features to evolve through the forecast horizon.
+For every SKU and forecast day the model outputs:
 
-**Multi-Horizon Direct LightGBM**
+* a **point forecast** (`sales_pred`), used as the expected demand, and
+* a grid of **quantile forecasts** (`q<level>` columns), trained with the quantile (pinball) loss, which describe the shape of the demand distribution for that day.
 
-Trains the forecasting problem across the 28-day horizon so that each future horizon is predicted without feeding previous model predictions back into the feature set. Used a 7 day stride to create origin dates to reduce the computational bottleneck.
+A recursive LightGBM variant (one-step-ahead, predictions fed back as lags) is also implemented and compared in backtesting.
 
-**Operational baselines**
+### Operational baselines
 
 * Seasonal naive
-* Trailing moving average
-* Seasonal Moving Average (More stronger baseline)
-* Croston & Croston SBA (since data contains extremely intermittent SKUs. But found out to be least performing since the parameters are driven by smooth SKUs)
+* Simple moving average
+* Seasonal moving average (a stronger baseline)
+* Croston & Croston SBA (included for the intermittent SKUs; they performed worst overall because their parameters are dominated by the smoother SKUs)
 
-The baselines provide reference points for both forecast accuracy and downstream inventory performance.
+Baselines go through the same inventory simulation, so the comparison covers both accuracy and cost.
+
+---
+
+## From Daily Quantiles to Safety Stock
+
+A replenishment order placed at a review date has to cover demand over the **risk period**: lead time + review period (L + R = 4 + 7 = 11 days). The model gives quantiles for each **single day**, but the decision needs a quantile of the **total** demand over 11 days.
+
+Those are not the same thing. Adding up the daily 85th percentiles gives a number far above the 85th percentile of the 11-day total, because it assumes every day is a high-demand day at once. This was the main cause of inflated safety stock in earlier experiments.
+
+The pipeline solves this by **Monte Carlo simulation** of the risk-period demand, for each SKU:
+
+1. **Take the daily quantile forecasts** for the first L + R days of the horizon.
+2. **Build each day's demand distribution** by linear interpolation between the quantile levels (an approximate inverse CDF).
+3. **Simulate 5,000 demand paths:** for each path and day, draw u ~ Uniform(0, 1), map it to a demand value through that day's inverse CDF, and clip at zero.
+4. **Sum each path over the risk period** to get 5,000 samples of total risk-period demand.
+5. **Read the order-up-to target** as the quantile of those samples at the target service level τ:
+
+$$
+S = Q_{\tau}\left(\sum_{t=1}^{L+R} D_t\right)
+$$
+
+6. **Safety stock** is the gap between that target and the expected demand from the point forecast:
+
+$$
+SS = \max\left(0,\; S - \sum_{t=1}^{L+R} \hat{y}_t\right)
+$$
+
+```text
+Daily quantile forecasts (q-levels × L+R days)
+        ↓  interpolate → per-day inverse CDF
+Monte Carlo: 5,000 demand paths
+        ↓  sum over L+R days
+Distribution of risk-period demand
+        ↓  τ-quantile
+Order-up-to target S
+        ↓  minus expected demand
+Safety stock
+```
+
+**Modelling assumptions**
+
+* **Daily demands are sampled independently.** Real demand is often positively autocorrelated (a busy day tends to be followed by another), which would widen the true distribution of the total. The simulation may therefore slightly understate risk for such SKUs.
+* **Tails are bounded by the outermost quantiles.** Interpolation does not extrapolate beyond the lowest and highest quantile levels the model predicts, so extreme spikes are capped at the top quantile.
+* **Fixed random seed** (42) for reproducible safety-stock levels across runs.
+* If no quantile columns are present, the policy raises no buffer (SS = 0); the RMSE policy should be used for point-only models.
+
+### Cost-aligned service level
+
+With holding cost h = 0.2 and stockout cost p = 1.0 per unit, the cost-optimal (newsvendor) service level is:
+
+$$
+\tau^* = \frac{p}{p + h} = \frac{1}{1.2} \approx 83.3\%
+$$
+
+This is the reference for choosing `target_service_level`.
+
+### Safety-stock policies compared
+
+| Policy | Description |
+|---|---|
+| `rmse` (v1) | Point forecast + buffer scaled by historical forecast RMSE |
+| `quantile` (v2, selected) | Monte Carlo risk-period distribution from quantile forecasts (above) |
+| `coverage` (v2) | Safety stock calibrated using the **empirical coverage** of the forecast quantiles on historical data |
 
 ---
 
 ## Validation & Model Selection
 
-The pipeline uses **chronological walk-forward backtesting** rather than random train/test splitting.
+The pipeline uses **chronological walk-forward backtesting**, not random splits:
 
-Backtesting experiments can be configured and compared automatically. A selected model can then be evaluated on a separate holdout test period against the same baselines.
+1. **Model experimentation** — compare forecasting approaches and safety-stock policies across historical windows.
+2. **Model selection** — choose a candidate model + policy from those results.
+3. **Holdout evaluation** — evaluate the candidate on unseen data against the same baselines.
+4. **Deployment decision** — decide whether the evidence justifies deployment.
 
-This separates:
-
-1. **Model experimentation** — compare forecasting approaches across historical backtest windows.
-2. **Model selection** — select a candidate based on the experiment results.
-3. **Holdout evaluation** — evaluate the selected candidate on unseen data.
-4. **Deployment decision** — determine whether the candidate provides sufficient evidence to justify deployment.
-
-A model winning historical backtests does not automatically imply that it should be deployed. The holdout evaluation and comparison with stronger baselines remain separate checks.
+Winning backtests does not automatically mean deployment; the holdout and the comparison with strong baselines are separate checks.
 
 ---
 
 ## Evaluation
 
-### Forecast metrics
+### Point-forecast accuracy
 
-* **WRMSSE** — primary forecast-accuracy metric
-* **WAPE**   - 
-* **MAE** — interpretable absolute error 
+* **WRMSSE** — primary accuracy metric
+* **WAPE** — volume-weighted absolute error
+* **MAE** — interpretable absolute error
 * **Bias** — systematic over- or under-forecasting
-* **Cumulative forecast error** and **Cumulative bias** : over the risk period
-* **Forecast Value Added (FVA)** relative to operational baselines
+* **Cumulative MAE and bias** — over the risk period
+* **Forecast Value Added (FVA)** — relative to baselines
 
-### Inventory metrics
+### Probabilistic quality
 
-The forecasting evaluation is complemented by a periodic-review inventory simulation using:
-This layer is fixed and not optimized with different policies. 
-* Lead time (fixed)
-* Review period (fixed)
-* Forecasted demand over the risk period
-* Error-based safety stock 
-* Order-up-to levels
-* Holding cost
-* Stockout cost
-* Lost sales
+* **Empirical coverage** — share of actual demand falling at or below each predicted quantile; a well-calibrated q85 should cover about 85% of outcomes.
 
-Forecast accuracy and inventory performance are treated as related but distinct evaluation layers.
+### Inventory performance
+
+Periodic-review, order-up-to simulation with fixed parameters:
+
+* Lead time **4 days**, review period **7 days**
+* Holding cost **0.2** per unit, stockout cost **1.0** per unit
+* Lost sales (unmet demand is not backordered)
+* Outputs: holding cost, stockout cost, total cost, lost sales
 
 ---
 
-## Current Reference Result
-
 ## Holdout Test Result
 
-After thorough walk-forward backtesting and model selection, the selected candidate was evaluated on a separate unseen holdout period.
+The selected candidate was evaluated on a separate, unseen holdout period (1 window).
 
-**Current deployment candidate: LGBM Direct**
+**Current deployment candidate: Quantile LightGBM Direct (1-year training) + `quantile` safety-stock policy**
 
-| Metric | LGBM Direct |
-|---|---:|
-| MAE | **1.0880** |
-| BIAS% | **-2.61%** |
-| WRMSSE | **0.8435** |
-| Cumulative MAE | **5.4316** |
-| Cumulative Bias | **-0.336** |
-| Total inventory cost | **$16,479** |
+### Forecast accuracy
+
+Identical under both policies; the policy only changes inventory decisions.
+
+| Metric | LGBM Direct | Simple Moving Average | LGBM improvement |
+|---|---:|---:|---:|
+| WRMSSE | **0.8349** | 0.9378 | 11.0% |
+| WAPE | **0.7852** | 0.8483 | 7.4% |
+| MAE | **1.0830** | 1.1700 | 7.4% |
+| BIAS% | -2.59% | 0.01% | — |
+| Cumulative MAE | **5.3991** | 5.8985 | 8.5% |
+| Cumulative bias | -0.3333 | 0.0012 | — |
+
+### Inventory cost by safety-stock policy
+
+| Policy | Model | Holding cost | Stockout cost | Total cost | Savings vs SMA | Cost FVA |
+|---|---|---:|---:|---:|---:|---:|
+| `quantile` | **LGBM Direct** | $14,428.34 | $1,490.09 | **$15,918.42** | **$3,763.48** | **19.12%** |
+| `quantile` | Simple Moving Average | $18,707.83 | $974.07 | $19,681.90 | — | — |
+| `coverage` | LGBM Direct | $15,208.70 | $1,441.62 | $16,650.32 | $1,108.64 | 6.24% |
+| `coverage` | Simple Moving Average | $16,327.55 | $1,431.41 | $17,758.96 | — | — |
 
 ### Business impact
-Cost Savings with Other Models:
 
-Total costs in this portfolio are predominantly driven by inventory holding expenses rather than stockouts—even under balanced cost parameters (**holding cost per unit = 0.2; stockout penalty factor = 1.0**). This stems from the complexity of predicting demand across highly diverse SKUs with a pronounced long tail. Across both statistical baselines and advanced machine learning models, algorithms consistently exhibit an upward forecasting bias when attempting to capture sparse long-tail demand.
+* **The probabilistic setup beats the v1 point + RMSE setup.** Total cost fell from $16,479 to **$15,918** (−$561, −3.4%), with WRMSSE improving from 0.8435 to 0.8349.
+* **19.1% lower cost than the moving-average baseline** under the `quantile` policy.
+* **Coverage calibration did not pay off for LGBM.** Versus the `quantile` policy it added ~$780 in holding cost to avoid ~$48 in stockouts (net +$732). It helped the moving-average baseline much more (−$1,923), which suggests LGBM's quantiles were already reasonably calibrated while the baseline's were not.
+* **Holding cost still dominates** (~91% of LGBM's total, down from ~97% in v1). Sparse long-tail SKUs remain over-stocked.
 
-| Comparison | Cost Difference | FVA |
+### v1 reference (point forecast + RMSE safety stock)
+
+| Metric | LGBM Direct (v1) |
+|---|---:|
+| MAE | 1.0880 |
+| BIAS% | -2.61% |
+| WRMSSE | 0.8435 |
+| Cumulative MAE | 5.4316 |
+| Cumulative bias | -0.336 |
+| Total inventory cost | $16,479 |
+
+| Comparison (v1) | Cost difference | FVA |
 |---|---:|---:|
-| Moving Average | **$1136 lower** | **6.45%** |
-| Seasonal Moving Average | **$1601 lower** | **8.86%**|
-| Seasonal Naive | **$2144 lower** | **11.52%** |
-| Croston SBA | **$2220 lower** | **11.88%** |
-| Croston | **$3085 lower** | **15.77%** |
+| Moving Average | $1,136 lower | 6.45% |
+| Seasonal Moving Average | $1,601 lower | 8.86% |
+| Seasonal Naive | $2,144 lower | 11.52% |
+| Croston SBA | $2,220 lower | 11.88% |
+| Croston | $3,085 lower | 15.77% |
 
-The holdout therefore provides the current evidence used for the deployment decision. It should not be interpreted as a guarantee of future production performance.
+The holdout is a single window. It is the current evidence for the deployment decision, not a guarantee of production performance.
+
+---
 
 ## Inventory Simulation
 
-The inventory component uses a **periodic-review replenishment policy**.
-* **Note**: The current policy applies standardized holding and stockout costs across all SKUs to determine safety stock levels. A key outcome of this analysis reveals that adopting segment-specific inventory policies—particularly specialized strategies for long-tail and intermittent items—will unlock further high-impact cost savings beyond the baseline projections.
-At each review point, the system calculates the inventory decision using the forecast and current inventory state:
+At each review date:
 
 ```text
-Forecast
+Quantile forecasts
    ↓
-Risk-period demand
+Monte Carlo risk-period demand (L + R)
    ↓
-Safety stock
+Order-up-to target S at service level τ
    ↓
-Order-up-to level
+Safety stock = S − expected demand
    ↓
-Order quantity
+Order quantity = S − inventory position
 ```
 
-The current test simulation generates inventory decisions for the complete evaluation month at each review period and records realized inventory outcomes.
+The current test simulation generates decisions for the whole evaluation month at each review period and records realized outcomes.
 
-In a future production-style simulation, the process will operate sequentially:
+The v3 production-style simulation will run sequentially:
 
 ```text
 Review date
     ↓
-Generate forecast
+Generate quantile forecast
     ↓
-Generate replenishment order
+Simulate risk-period demand → order
     ↓
 Store decision in PostgreSQL
     ↓
@@ -212,76 +309,65 @@ Update realized inventory outcomes
 Next review period
 ```
 
-This allows the same inventory database structure to support both retrospective testing and a future production-like replay.
-
 ---
 
 ## Database & API
 
-**PostgreSQL** stores forecast and inventory results used by the application and dashboard.
+**PostgreSQL** stores:
 
-The database currently supports:
-
-* Forecast results
-* Inventory decisions
-* Inventory state
+* Point and quantile forecasts
+* Inventory decisions and state
 * Replenishment quantities
 * Safety-stock levels
-* Realized inventory costs
+* Realized inventory costs (filled in after the demand period has passed)
 
-Realized outcomes such as lost sales and costs can be populated after the corresponding demand period has elapsed.
-
-
-## FastAPI Serving
-
-The current FastAPI service exposes pre-computed forecast and inventory results persisted in PostgreSQL.
-
-### Forecast endpoint
+### FastAPI serving
 
 ```http
 GET /forecast
 ```
 
-The FastAPI service retrieves pre-computed forecasts and inventory information from PostgreSQL for a requested `store_id` and `item_id`.
+Returns pre-computed results for a requested `store_id` and `item_id`:
 
-The endpoint returns:
-
-* 28-day demand forecasts
-* Prediction dates
-* Quantile forecasts 
+* 28-day point forecasts and prediction dates
+* Quantile forecasts
 * Safety stock
 * Order-up-to level
 
-The API operates as a read-only serving layer over persisted database snapshots generated by offline LightGBM recursive forecasting and inventory policy jobs. Interactive visualizations consume local Parquet exports directly via the Streamlit dashboard.
-# Diagnostic Findings, System Limitations & Roadmap
-
-## Key Diagnostic Finding
-Holding costs account for ~97% of total portfolio cost because standard ML models over-forecast sparse long-tail demand, and summing daily 85th-percentile quantiles across the review window severely inflates safety stock.
+The API is a read-only layer over database snapshots written by the offline forecasting and inventory jobs. The Streamlit dashboard reads local Parquet exports directly.
 
 ---
 
-## Future Roadmap & Strategic Next Steps
+## Diagnostic Findings
 
-* **Direct Horizon Forecasting:** Transition from daily point predictions to forecasting cumulative demand over the full risk horizon ($L+R$). Using a sliding window preserves sample size while smoothing zero-inflation and outputting exact Reorder Points (ROP) via direct quantile regression.
-* **Differentiated Inventory Policies:** Move away from uniform safety stock rules by implementing specialized intermittent strategies (e.g., Croston SBA or Min-Max ROP triggers) for slow movers, reserving ML point forecasts for high-velocity SKUs.
-* **Pipeline Generalization:** Decouple hardcoded M5 column references into a centralized schema config to make the end-to-end framework portable across arbitrary retail datasets.
+* **Daily quantiles must not be summed.** Summing daily quantiles overstates risk-period demand; simulating the total is what made quantile-based safety stock usable.
+* **Probabilistic beats point + RMSE** by 3.4% on total cost, because uncertainty is learned per SKU and context instead of applied as one symmetric buffer.
+* **Calibration is not the same as cost-optimality.** Better coverage increased LGBM's cost; the service level should follow the cost ratio (≈83%).
+* **Holding cost dominates** (~91%), driven by over-stocking long-tail intermittent SKUs.
+
+---
+
+## Roadmap
+
+* **Correlated demand paths:** sample days jointly (e.g. a shared demand shock per path, or a copula) instead of independently, so autocorrelated SKUs get realistic risk-period variance.
+* **Direct risk-horizon quantiles:** forecast the L + R total directly with quantile regression as an alternative to aggregating daily quantiles, and compare.
+* **Probabilistic scoring:** add pinball loss / CRPS and coverage per quantile and per SKU segment to model selection.
+* **Differentiated policies:** segment-specific service levels and methods (e.g. Croston SBA or min-max for slow movers, quantile LightGBM for fast movers).
+* **Multi-window holdout** for more robust policy comparisons.
+* **Pipeline generalization:** move hardcoded M5 column references into a central schema config.
 
 ---
 
 ## System Limitations
 
-* **Scale & Memory:** Direct multi-horizon target generation increases dataset size per historical origin. While efficient for 300 SKUs, scaling requires optimized feature pipelines and memory management.
-* **Scope:** The benchmark currently assumes full historical coverage and does not evaluate cold starts, product launches, or SKU exits.
+* **Scale & memory:** direct multi-horizon targets enlarge the dataset per origin, and Monte Carlo runs per SKU. Fine for 300 SKUs; scaling needs vectorized simulation and optimized feature pipelines.
+* **Independence assumption** in the risk-period simulation (see above).
+* **Scope:** full historical coverage assumed; no cold starts, launches or exits.
+* **Single holdout window** for policy comparison.
 
 ---
 
-### V3 production-style simulation
-
-Use the remaining future data to replay the forecasting and inventory process sequentially:
-
 ## Running the Pipeline
-
-From the workspace containing this README:
 
 ```bash
 cd retail-forecast-system
@@ -311,25 +397,22 @@ uv run python run_pipeline.py \
 
 ## Primary Evaluation Principle
 
-**WRMSSE is the primary forecast-accuracy metric**, complemented by WAPE, cumulative MAE and BIAS, FVA, and downstream inventory measures.
-
-The project treats forecasting as the first stage of a broader decision pipeline:
+**WRMSSE is the primary point-accuracy metric**, complemented by WAPE, cumulative MAE and bias, FVA, empirical coverage, and inventory cost. The final decision is made on inventory cost, because that is what the forecast is for.
 
 ```text
 Demand data
     ↓
 Feature engineering
     ↓
-Forecast
+Quantile forecast
     ↓
-Forecast evaluation
+Forecast + calibration evaluation
     ↓
-Inventory policy
+Monte Carlo risk-period demand
     ↓
-Replenishment decision
+Safety stock & order-up-to level
     ↓
 Realized inventory outcomes
 ```
 
-The objective is therefore not simply to produce a lower forecast error, but to understand how forecast quality and uncertainty translate into operational replenishment decisions.
-
+The goal is not just lower forecast error, but a forecast of uncertainty that leads to better replenishment decisions.
