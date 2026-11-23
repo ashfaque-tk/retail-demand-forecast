@@ -19,11 +19,9 @@ logger = logging.getLogger(__name__)
 
 class Forecaster():
 
-    def __init__(self, model:SelectModel, feature_builder:FeatureBuilder, original_features:list[str], forecast_type:str='recursive',
+    def __init__(self, feature_builder:FeatureBuilder, original_features:list[str], forecast_type:str='recursive',
                  max_horizon_days:int=28):
-        '''model: Already fitted SelectModel instance
-        feature_builder: feature builder class'''
-        self.model = model
+        '''feature_builder: feature builder class'''
         self.feature_builder = feature_builder
         self.forecast_type  = forecast_type
         self.full_features = original_features
@@ -35,14 +33,14 @@ class Forecaster():
 
         self.max_horizon = max_horizon_days
 
-    def get_model_feature_importance(self) -> pd.Series:
+    def get_model_feature_importance(self, model:SelectModel) -> pd.Series:
             """Returns the fit model's feature importances as a sorted pandas Series."""
             # Access the underlying point model attribute on SelectModel
-            if hasattr(self.model.model_point, "feature_importances_"):
-                importances = self.model.model_point.feature_importances_
+            if hasattr(model.model_point, "feature_importances_"):
+                importances = model.model_point.feature_importances_
             else:
                 raise AttributeError(
-                    f"The fitted engine '{self.model.kind}' does not expose 'feature_importances_'."
+                    f"The fitted engine '{model.kind}' does not expose 'feature_importances_'."
                 )
 
             # 2. Map to feature names for scannability
@@ -51,17 +49,18 @@ class Forecaster():
             # 3. Return sorted Series (highest importance first)
             return importance_series.sort_values(ascending=False)
     
-    def forecast( self, train_df: pd.DataFrame, test_df: pd.DataFrame,  max_lookback_days: int = 100) -> pd.DataFrame:
+    def forecast( self, train_df: pd.DataFrame, test_df: pd.DataFrame, model: SelectModel, max_lookback_days: int = 100) -> pd.DataFrame:
                 """Dispatches to direct or recursive forecast without engine-level logic."""
                 if self.forecast_type == 'direct':
                     return self.direct_forecast(
-                        train_df, test_df)
-                return self.recursive_forecaster(train_df, test_df, max_lookback_days=max_lookback_days)
+                        train_df, test_df, model=model)
+                return self.recursive_forecaster(train_df, test_df, model=model, max_lookback_days=max_lookback_days)
     
     
     def recursive_forecaster(self, 
                             train_df: pd.DataFrame, 
                             test_df: pd.DataFrame,
+                            model: SelectModel,
                             max_lookback_days: int = 100)->pd.DataFrame:
         '''train_df: entire training set
             test_df: test set with static features (should only contain the static features
@@ -72,7 +71,7 @@ class Forecaster():
         ##### split the train_df , to train_df[features], train_df['sales'] to fit the model.
 
         X_train,y_train = train_df[self.full_features], train_df['sales']
-        self.model.fit(X_train,y_train)
+        model.fit(X_train,y_train)
 
         ##### recursive prediction, feeding back predicted sales as inputs for lag features for tomorrow
         cutoff_date = train_df['date'].max() - pd.Timedelta(days=max_lookback_days)
@@ -100,7 +99,7 @@ class Forecaster():
                 train_df['item_id'].unique().tolist()
             ), 'AssertionError: items in test_df do not match train_df'
 
-            preds = self.model.predict(next_day_full_feats)  # point, q10, q90, ...
+            preds = model.predict(next_day_full_feats)  # point, q10, q90, ...
 
             day_result = pd.DataFrame({
                 'item_id': next_day_full_feats['item_id'].values,
@@ -138,7 +137,7 @@ class Forecaster():
         return preds_df
 
 
-    def direct_forecast(self,train_df:pd.DataFrame,test_df:pd.DataFrame):
+    def direct_forecast(self,train_df:pd.DataFrame,test_df:pd.DataFrame,model:SelectModel):
 
         ''' train_df must have all features build already, 
           Build a direct train and test frame then predict'''
@@ -174,11 +173,11 @@ class Forecaster():
 
         # fit the model
                
-        self.model.fit(X_train,y_train)
+        model.fit(X_train,y_train)
 
         logger.info('Multi-horizon Direct forecast: Fit complete. Predicting')
         ## predict
-        preds = self.model.predict(X_test)
+        preds = model.predict(X_test)
 
         preds_df = pd.DataFrame({
                     'item_id':X_direct_test['item_id'].values,

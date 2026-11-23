@@ -37,6 +37,8 @@ import warnings
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import mean_pinball_loss
+import re 
 
 __all__ = [
     "MetricsCalculator",
@@ -129,7 +131,8 @@ class MetricsCalculator:
 
         if "sales_pred" not in self.pred_df.columns:
             raise KeyError("pred_df must contain a 'sales_pred' column")
-        preds = self.pred_df[self.keys + ["sales_pred"]]
+        qcols = sorted(c for c in self.pred_df.columns if re.fullmatch(r"q\d{1,3}",c))
+        preds = self.pred_df[self.keys + ['sales_pred'] + qcols]
 
         dup_truth = int(truth.duplicated(subset=self.keys).sum())
         if dup_truth:
@@ -166,6 +169,15 @@ class MetricsCalculator:
 
         merged = merged.drop(columns="_merge")
         merged = merged.dropna(subset=["sales", "sales_pred"])
+        if qcols:
+            nan_q = merged[qcols].isna().any()
+            if nan_q.any():
+                bad = nan_q[nan_q].index.tolist()
+                raise ValueError(
+                    f"quantile column(s) contain NaN after alignment: {bad}. "
+                    "A missing quantile cannot be scored and usually means the "
+                    "model failed for that row."
+                )
 
         if merged.empty:
             raise ValueError("alignment produced an empty frame; check the join keys.")
@@ -337,6 +349,98 @@ class MetricsCalculator:
             )
             self._cumulative_tau = tau
         return self._cumulative
+    # --------------------------------------------------------------------
+    # probablistic metrics 
+    # --------------------------------------------------------------------
+
+    def pinball_loss(self, quantiles: dict[str, float]) -> dict[str, float]:
+        """Per-quantile pinball loss on the aligned frame. Lower is better.
+
+        ``quantiles`` maps an aligned column to its level, e.g.
+        ``{"q10": 0.10, "q90": 0.90}``. The columns must exist in pred_df;
+        they are merged into ``aligned`` at construction.
+        """
+        df = self.aligned
+        out: dict[str, float] = {}
+        for col, alpha in quantiles.items():
+            if col not in df.columns:
+                raise KeyError(
+                    f"quantile column '{col}' not in aligned frame. It must be a "
+                    "pred_df column matching ^q\\d+$ so it is merged at alignment."
+                )
+            alpha = float(alpha)
+            if not 0.0 < alpha < 1.0:
+                raise ValueError(f"quantile level for '{col}' must be in (0, 1), got {alpha}")
+            out[col] = float(mean_pinball_loss(df["sales"], df[col], alpha=alpha))
+        return out
+    
+    def pinball_mean(self, quantiles: dict[str, float]) -> float:
+        """Mean pinball loss across quantile levels. Headline scalar for FVA/JSON."""
+        per_level = self.pinball_loss(quantiles)
+        return float(np.mean(list(per_level.values())))
+
+    def interval_coverage(
+        self,
+        lower_col: str,
+        upper_col: str,
+        *,
+        nominal: float | None = None,
+    ) -> dict[str, float]:
+        """Empirical coverage and mean width of the [lower_col, upper_col] band.
+        Pass ``nominal`` (e.g. 0.80 for a q10-q90 band)
+        to also get ``coverage_error = coverage - nominal``.
+        """
+        df = self.aligned
+        for col in (lower_col, upper_col):
+            if col not in df.columns:
+                raise KeyError(
+                    f"'{col}' not in aligned frame; it must be a quantile column "
+                    "of pred_df matching ^q\\d+$."
+                )
+        actual = df["sales"].to_numpy()
+        lo = df[lower_col].to_numpy()
+        hi = df[upper_col].to_numpy()
+
+        inverted = lo > hi
+        if inverted.any():
+            raise ValueError(
+                f"{int(inverted.sum())} rows have {lower_col} > {upper_col}; "
+                "the interval is inverted."
+            )
+
+        coverage = float(((actual >= lo) & (actual <= hi)).mean())
+        out: dict[str, float] = {
+            "coverage": coverage,
+            "mean_width": float((hi - lo).mean()),
+        }
+        if nominal is not None:
+            nominal = float(nominal)
+            out["nominal"] = nominal
+            out["coverage_error"] = coverage - nominal
+        return out
+
+    def coverage_level(
+        self, 
+        quantiles: dict[str, float]
+        ) -> dict[str, float]:
+        """Empirical one-sided coverage per quantile: ``mean(actual <= q_alpha)``.
+
+        Each value should sit near its nominal level for a calibrated forecast.
+        """
+        df = self.aligned
+        out: dict[str, float] = {}
+        for col, alpha in quantiles.items():
+            if col not in df.columns:
+                raise KeyError(
+                    f"quantile column '{col}' not in aligned frame. It must be a "
+                    "pred_df column matching ^q\\d+$ so it is merged at alignment."
+                )
+            alpha = float(alpha)
+            if not 0.0 < alpha < 1.0:
+                raise ValueError(f"quantile level for '{col}' must be in (0, 1), got {alpha}")
+            out[col] = float((df["sales"] <= df[col]).mean())
+        return out
+
 
     # ------------------------------------------------------------------
     # entry point
@@ -356,6 +460,21 @@ class MetricsCalculator:
         for level in ("dept_id", "cat_id"):
             if level in self.aligned.columns:
                 out[f"MAE_{level.split('_')[0]}"] = self.grouped_mae(level)
+
+        q_levels = {
+            col: int(m.group(1)) / 100.0
+            for col in self.aligned.columns
+            if (m := re.fullmatch(r"q(\d{1,3})", col)) and 0 < int(m.group(1)) < 100
+        }
+        if q_levels:
+            pinball = self.pinball_loss(q_levels)
+            coverage = self.coverage_level(q_levels)
+            out["pinball"] = pinball
+            out["pinball_mean"] = float(np.mean(list(pinball.values())))
+            out["coverage"] = coverage
+            out["coverage_err"] = {
+                col: round(coverage[col] - alpha, 4) for col, alpha in q_levels.items()
+            }
         return out
 
 
@@ -374,180 +493,180 @@ def fva(baseline_value: float, model_value: float) -> float:
 
 
 # ----------------------------------------------------------------------
-# array helpers - callers pass matching arrays and own the alignment
-# ----------------------------------------------------------------------
-def mae(ytrue, ypred) -> float:
-    """Unweighted MAE between two equally-ordered arrays.
+# # array helpers - callers pass matching arrays and own the alignment
+# # ----------------------------------------------------------------------
+# def mae(ytrue, ypred) -> float:
+#     """Unweighted MAE between two equally-ordered arrays.
 
-    Deprecated for frame input: the caller owns row alignment, which is exactly
-    the mistake this module was refactored to remove. Use
-    ``MetricsCalculator(train, test, pred, risk).mae()`` for frames.
-    """
-    warnings.warn(
-        "mae(y_true, y_pred) requires the caller to have aligned the rows "
-        "correctly. Use MetricsCalculator for DataFrame input.",
-        UserWarning,
-        stacklevel=2,
-    )
-    y, p = np.asarray(ytrue, dtype=float), np.asarray(ypred, dtype=float)
-    if y.shape != p.shape:
-        raise ValueError(f"shape mismatch: y_true {y.shape} vs y_pred {p.shape}")
-    return float(np.mean(np.abs(p - y)))
-
-
-def bias(y_true, y_pred) -> float:
-    """Aggregate over-forecast as a percentage of total actual demand.
-
-    Deprecated for frame input: the caller owns row alignment. Use
-    ``MetricsCalculator(train, test, pred, risk).bias()`` for frames.
-    """
-    warnings.warn(
-        "bias(y_true, y_pred) requires the caller to have aligned the rows "
-        "correctly. Use MetricsCalculator for DataFrame input.",
-        UserWarning,
-        stacklevel=2,
-    )
-    y, p = np.asarray(y_true, dtype=float), np.asarray(y_pred, dtype=float)
-    if y.shape != p.shape:
-        raise ValueError(f"shape mismatch: y_true {y.shape} vs y_pred {p.shape}")
-    if y.sum() == 0:
-        return float("nan")
-    return float((p.sum() - y.sum()) / y.sum() * 100)
+#     Deprecated for frame input: the caller owns row alignment, which is exactly
+#     the mistake this module was refactored to remove. Use
+#     ``MetricsCalculator(train, test, pred, risk).mae()`` for frames.
+#     """
+#     warnings.warn(
+#         "mae(y_true, y_pred) requires the caller to have aligned the rows "
+#         "correctly. Use MetricsCalculator for DataFrame input.",
+#         UserWarning,
+#         stacklevel=2,
+#     )
+#     y, p = np.asarray(ytrue, dtype=float), np.asarray(ypred, dtype=float)
+#     if y.shape != p.shape:
+#         raise ValueError(f"shape mismatch: y_true {y.shape} vs y_pred {p.shape}")
+#     return float(np.mean(np.abs(p - y)))
 
 
-def calculate_wape(y_true, y_pred) -> float:
-    """Weighted absolute percentage error. Returns NaN when actuals sum to zero."""
-    y_true = np.asarray(y_true, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
-    total = np.sum(y_true)
-    if total == 0:
-        return float("nan")
-    return float(np.sum(np.abs(y_true - y_pred)) / total)
+# def bias(y_true, y_pred) -> float:
+#     """Aggregate over-forecast as a percentage of total actual demand.
+
+#     Deprecated for frame input: the caller owns row alignment. Use
+#     ``MetricsCalculator(train, test, pred, risk).bias()`` for frames.
+#     """
+#     warnings.warn(
+#         "bias(y_true, y_pred) requires the caller to have aligned the rows "
+#         "correctly. Use MetricsCalculator for DataFrame input.",
+#         UserWarning,
+#         stacklevel=2,
+#     )
+#     y, p = np.asarray(y_true, dtype=float), np.asarray(y_pred, dtype=float)
+#     if y.shape != p.shape:
+#         raise ValueError(f"shape mismatch: y_true {y.shape} vs y_pred {p.shape}")
+#     if y.sum() == 0:
+#         return float("nan")
+#     return float((p.sum() - y.sum()) / y.sum() * 100)
 
 
-def calculate_mape(y_true, y_pred, ignore_zeros: bool = True) -> float:
-    """Mean absolute percentage error. Zero actuals are skipped by default."""
-    y_true = np.asarray(y_true, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
-    if ignore_zeros:
-        mask = y_true > 0
-        if not np.any(mask):
-            return float("nan")
-        return float(np.mean(np.abs((y_pred[mask] - y_true[mask]) / y_true[mask])) * 100)
-    return float(np.mean(np.abs((y_pred - y_true) / np.maximum(y_true, 1e-5))) * 100)
+# def calculate_wape(y_true, y_pred) -> float:
+#     """Weighted absolute percentage error. Returns NaN when actuals sum to zero."""
+#     y_true = np.asarray(y_true, dtype=float)
+#     y_pred = np.asarray(y_pred, dtype=float)
+#     total = np.sum(y_true)
+#     if total == 0:
+#         return float("nan")
+#     return float(np.sum(np.abs(y_true - y_pred)) / total)
 
 
-# ----------------------------------------------------------------------
-# legacy shims - kept so existing callers keep working
-# ----------------------------------------------------------------------
-def _calculator(train_df, test_df, pred_df, risk_period=None) -> "MetricsCalculator":
-    return MetricsCalculator(train_df, test_df, pred_df, risk_period)
+# def calculate_mape(y_true, y_pred, ignore_zeros: bool = True) -> float:
+#     """Mean absolute percentage error. Zero actuals are skipped by default."""
+#     y_true = np.asarray(y_true, dtype=float)
+#     y_pred = np.asarray(y_pred, dtype=float)
+#     if ignore_zeros:
+#         mask = y_true > 0
+#         if not np.any(mask):
+#             return float("nan")
+#         return float(np.mean(np.abs((y_pred[mask] - y_true[mask]) / y_true[mask])) * 100)
+#     return float(np.mean(np.abs((y_pred - y_true) / np.maximum(y_true, 1e-5))) * 100)
 
 
-def wrmsse(train_df: pd.DataFrame, test_df: pd.DataFrame, pred_df: pd.DataFrame) -> float:
-    """Deprecated. Use ``MetricsCalculator(train, test, pred).wrmsse()``.
-
-    Retained because notebooks/02 imports it. Numerically identical to the class
-    for item-major frames; the class additionally rejects malformed joins.
-    """
-    warnings.warn(
-        "wrmsse() is deprecated; use MetricsCalculator(train, test, pred).wrmsse()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _calculator(train_df, test_df, pred_df).wrmsse()
+# # ----------------------------------------------------------------------
+# # legacy shims - kept so existing callers keep working
+# # ----------------------------------------------------------------------
+# def _calculator(train_df, test_df, pred_df, risk_period=None) -> "MetricsCalculator":
+#     return MetricsCalculator(train_df, test_df, pred_df, risk_period)
 
 
-def scale(train_df: pd.DataFrame) -> pd.Series:
-    """Deprecated. Use ``MetricsCalculator(train, ...).scale``."""
-    warnings.warn(
-        "scale() is deprecated; use MetricsCalculator(train, ...).scale",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _calculator(
-        train_df,
-        train_df.head(1).assign(sales_pred=0.0),
-        train_df.head(1).assign(sales_pred=0.0),
-    ).scale
+# def wrmsse(train_df: pd.DataFrame, test_df: pd.DataFrame, pred_df: pd.DataFrame) -> float:
+#     """Deprecated. Use ``MetricsCalculator(train, test, pred).wrmsse()``.
+
+#     Retained because notebooks/02 imports it. Numerically identical to the class
+#     for item-major frames; the class additionally rejects malformed joins.
+#     """
+#     warnings.warn(
+#         "wrmsse() is deprecated; use MetricsCalculator(train, test, pred).wrmsse()",
+#         DeprecationWarning,
+#         stacklevel=2,
+#     )
+#     return _calculator(train_df, test_df, pred_df).wrmsse()
 
 
-def weights(train_df: pd.DataFrame) -> pd.Series:
-    """Deprecated. Use ``MetricsCalculator(train, ...).weights``."""
-    warnings.warn(
-        "weights() is deprecated; use MetricsCalculator(train, ...).weights",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _calculator(
-        train_df,
-        train_df.head(1).assign(sales_pred=0.0),
-        train_df.head(1).assign(sales_pred=0.0),
-    ).weights
+# def scale(train_df: pd.DataFrame) -> pd.Series:
+#     """Deprecated. Use ``MetricsCalculator(train, ...).scale``."""
+#     warnings.warn(
+#         "scale() is deprecated; use MetricsCalculator(train, ...).scale",
+#         DeprecationWarning,
+#         stacklevel=2,
+#     )
+#     return _calculator(
+#         train_df,
+#         train_df.head(1).assign(sales_pred=0.0),
+#         train_df.head(1).assign(sales_pred=0.0),
+#     ).scale
 
 
-def forecast_error(test_df: pd.DataFrame, pred_df: pd.DataFrame) -> pd.Series:
-    """Deprecated. Use ``MetricsCalculator(train, test, pred).forecast_error()``."""
-    warnings.warn(
-        "forecast_error() is deprecated; use MetricsCalculator(...).forecast_error()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _calculator(test_df, test_df, pred_df).forecast_error()
+# def weights(train_df: pd.DataFrame) -> pd.Series:
+#     """Deprecated. Use ``MetricsCalculator(train, ...).weights``."""
+#     warnings.warn(
+#         "weights() is deprecated; use MetricsCalculator(train, ...).weights",
+#         DeprecationWarning,
+#         stacklevel=2,
+#     )
+#     return _calculator(
+#         train_df,
+#         train_df.head(1).assign(sales_pred=0.0),
+#         train_df.head(1).assign(sales_pred=0.0),
+#     ).weights
 
 
-def mae_dept(true_df: pd.DataFrame, pred_df: pd.DataFrame) -> float:
-    """Deprecated. Use ``MetricsCalculator(train, test, pred).grouped_mae('dept_id')``."""
-    warnings.warn(
-        "mae_dept() is deprecated; use MetricsCalculator(...).grouped_mae('dept_id')",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _calculator(true_df, true_df, pred_df).grouped_mae("dept_id")
+# def forecast_error(test_df: pd.DataFrame, pred_df: pd.DataFrame) -> pd.Series:
+#     """Deprecated. Use ``MetricsCalculator(train, test, pred).forecast_error()``."""
+#     warnings.warn(
+#         "forecast_error() is deprecated; use MetricsCalculator(...).forecast_error()",
+#         DeprecationWarning,
+#         stacklevel=2,
+#     )
+#     return _calculator(test_df, test_df, pred_df).forecast_error()
 
 
-def mae_cat(true_df: pd.DataFrame, pred_df: pd.DataFrame) -> float:
-    """Deprecated. Use ``MetricsCalculator(train, test, pred).grouped_mae('cat_id')``."""
-    warnings.warn(
-        "mae_cat() is deprecated; use MetricsCalculator(...).grouped_mae('cat_id')",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _calculator(true_df, true_df, pred_df).grouped_mae("cat_id")
+# def mae_dept(true_df: pd.DataFrame, pred_df: pd.DataFrame) -> float:
+#     """Deprecated. Use ``MetricsCalculator(train, test, pred).grouped_mae('dept_id')``."""
+#     warnings.warn(
+#         "mae_dept() is deprecated; use MetricsCalculator(...).grouped_mae('dept_id')",
+#         DeprecationWarning,
+#         stacklevel=2,
+#     )
+#     return _calculator(true_df, true_df, pred_df).grouped_mae("dept_id")
 
 
-def get_all_metrics(
-    train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
-    pred_df: pd.DataFrame,
-    risk_period: int,
-) -> dict:
-    """Deprecated. Use ``MetricsCalculator(train, test, pred, risk).all_metrics()``."""
-    warnings.warn(
-        "get_all_metrics() is deprecated; use MetricsCalculator(...).all_metrics() "
-        "so that alignment is structural rather than positional.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    calc = MetricsCalculator(train_df, test_df, pred_df, risk_period)
-    return calc.all_metrics()
+# def mae_cat(true_df: pd.DataFrame, pred_df: pd.DataFrame) -> float:
+#     """Deprecated. Use ``MetricsCalculator(train, test, pred).grouped_mae('cat_id')``."""
+#     warnings.warn(
+#         "mae_cat() is deprecated; use MetricsCalculator(...).grouped_mae('cat_id')",
+#         DeprecationWarning,
+#         stacklevel=2,
+#     )
+#     return _calculator(true_df, true_df, pred_df).grouped_mae("cat_id")
 
 
-def compute_cumulative_metrics(
-    test_df: pd.DataFrame,
-    predicted_df: pd.DataFrame,
-    tau: int = 6,
-) -> pd.DataFrame:
-    """Deprecated. Use ``MetricsCalculator(...).cumulative(tau)``.
+# def get_all_metrics(
+#     train_df: pd.DataFrame,
+#     test_df: pd.DataFrame,
+#     pred_df: pd.DataFrame,
+#     risk_period: int,
+# ) -> dict:
+#     """Deprecated. Use ``MetricsCalculator(train, test, pred, risk).all_metrics()``."""
+#     warnings.warn(
+#         "get_all_metrics() is deprecated; use MetricsCalculator(...).all_metrics() "
+#         "so that alignment is structural rather than positional.",
+#         DeprecationWarning,
+#         stacklevel=2,
+#     )
+#     calc = MetricsCalculator(train_df, test_df, pred_df, risk_period)
+#     return calc.all_metrics()
 
-    ``train_df`` is not needed for this metric, so an empty frame is passed for the
-    WRMSSE quantities that are never read.
-    """
-    warnings.warn(
-        "compute_cumulative_metrics() is deprecated; use MetricsCalculator(...).cumulative(tau).",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    empty = pd.DataFrame({"item_id": pd.Series(dtype=str), "date": pd.Series(dtype="datetime64[ns]"), "sales": pd.Series(dtype=float)})
-    calc = MetricsCalculator(empty, test_df, predicted_df, tau)
-    return calc.cumulative(tau)
+
+# def compute_cumulative_metrics(
+#     test_df: pd.DataFrame,
+#     predicted_df: pd.DataFrame,
+#     tau: int = 6,
+# ) -> pd.DataFrame:
+#     """Deprecated. Use ``MetricsCalculator(...).cumulative(tau)``.
+
+#     ``train_df`` is not needed for this metric, so an empty frame is passed for the
+#     WRMSSE quantities that are never read.
+#     """
+#     warnings.warn(
+#         "compute_cumulative_metrics() is deprecated; use MetricsCalculator(...).cumulative(tau).",
+#         DeprecationWarning,
+#         stacklevel=2,
+#     )
+#     empty = pd.DataFrame({"item_id": pd.Series(dtype=str), "date": pd.Series(dtype="datetime64[ns]"), "sales": pd.Series(dtype=float)})
+#     calc = MetricsCalculator(empty, test_df, predicted_df, tau)
+#     return calc.cumulative(tau)

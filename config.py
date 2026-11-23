@@ -38,14 +38,15 @@ PIPELINE_CONFIG = {
     # Model
     "model": "",
     "forecast_type": "",  # "direct" or "recursive"
-    "quantiles"    : [critical_quantile(HOLDING_COST_RATE)],
+    "quantiles"    : [0.10,0.5,critical_quantile(HOLDING_COST_RATE),0.9],
     "safety_stock_policy": "quantile",
     "use_log_transform": False, # for scaling 
-    "categorical_cols": ["item_id",'cat_id', "dept_id"],
+    "categorical_cols": ["item_id",'cat_id', "dept_id","demand_type"],
 
     # Inventory Policy
     "lead_time": 4,
     "review_period": 7,
+    "coverage_days": 5,
     "holding_cost_rate": HOLDING_COST_RATE,
     "stockout_cost_rate": STOCKOUT_COST_RATE,
 }

@@ -40,8 +40,8 @@ def _make_model(
         from lightgbm import LGBMRegressor  # optional dependency
         params = dict(
             tweedie_variance_power=1.2,
-            n_estimators=200,
-            learning_rate=0.05,
+            n_estimators=500,
+            learning_rate=0.03,
             num_leaves=15,
             subsample=0.8,
             colsample_bytree=0.8,
@@ -186,4 +186,18 @@ class SelectModel:
                 pred_quantile = np.expm1(raw_q) if self.use_log_transform else raw_q
                 preds[qval] = np.clip(pred_quantile, 0.0, None)
 
+        # enforce strict monotonicity
+        if len(self.quantile_levels) > 1:
+            sorted_indices = np.argsort(self.quantile_levels)
+            sorted_keys = [f'q{int(self.quantile_levels[i]*100)}' for i in sorted_indices]
+            q_matrix = np.column_stack([preds[k] for k in sorted_keys])
+            q_matrix.sort(axis=1)
+            for i,k in enumerate(sorted_keys):
+                preds[k] = q_matrix[:,i]
+
+            for i in range(len(sorted_keys)-1):
+                assert np.all(preds[sorted_keys[i]]<= preds[sorted_keys[i+1]]),(
+                    f"Quantile monotonicity violated between {sorted_keys[i]} and {sorted_keys[i+1]}"
+                )
+        
         return preds

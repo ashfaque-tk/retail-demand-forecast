@@ -4,12 +4,12 @@ CREATE TABLE IF NOT EXISTS predictions (
     store_id VARCHAR(10) NOT NULL,
     target_date DATE NOT NULL,
     prediction_made_date DATE NOT NULL,
-    horizon_days INTEGER NOT NULL,
-    model_version VARCHAR(50) DEFAULT 'v1',
+    horizon_days INTEGER NOT NULL,            -- Step h=1..28
+    model_name VARCHAR(50) NOT NULL,          -- 'lgbm', 'naive', 'moving_average'
+    model_version VARCHAR(50) DEFAULT 'v1',   -- 'v1.0.2', '2026-W39-run'
     sales_pred FLOAT NOT NULL,
-    q10 FLOAT NOT NULL,
-    q90 FLOAT NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
+    quantiles JSONB DEFAULT '{}'::jsonb,      -- Dynamic quantiles e.g. {"q10": 8.2, "q83": 14.1, "q90": 15.8}
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS actuals (

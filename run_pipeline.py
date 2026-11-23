@@ -110,11 +110,22 @@ def parse_cli_args() -> argparse.Namespace:
         "--safety-stock-policy",
         type=str,
         dest='safety_stock_policy',
-        choices=["rmse", "quantile"],
+        choices=["rmse", "quantile", "coverage"],
         default=None,
-        help="How safety stock is sized: 'rmse' (z * RMSE_tau) or "
-             "'quantile' (empirical spread at the cost-implied alpha). "
+        help="How safety stock is sized: 'rmse' (z * RMSE_tau), "
+             "'quantile' (empirical spread at the cost-implied alpha), or "
+             "'coverage' (extra forecast demand over coverage_days). "
              "Defaults to PIPELINE_CONFIG['safety_stock_policy']."
+    )
+
+    parser.add_argument(
+        "--coverage-days",
+        type=int,
+        dest="coverage_days",
+        default=None,
+        help="Extra days of forecast demand held as coverage beyond the "
+             "risk period (lead time + review period). Defaults to "
+             "PIPELINE_CONFIG['coverage_days']."
     )
 
     return parser.parse_args()
@@ -133,6 +144,7 @@ def build_engine(feature_names: list[str]) -> BacktestEngine:
         feature_names=feature_names,
         lead_time_days=PIPELINE_CONFIG["lead_time"],
         review_period_days=PIPELINE_CONFIG["review_period"],
+        coverage_days=PIPELINE_CONFIG.get("coverage_days", 0),
         holding_cost_rate=PIPELINE_CONFIG["holding_cost_rate"],
         max_windows=PIPELINE_CONFIG.get("max_windows"),
         baseline_quantiles=PIPELINE_CONFIG.get("quantiles"),
@@ -225,8 +237,12 @@ def main():
                     PIPELINE_CONFIG['quantiles'],HOLDING_COST_RATE,STOCKOUT_COST_RATE)
     if args.safety_stock_policy:
         PIPELINE_CONFIG['safety_stock_policy'] = args.safety_stock_policy
-    logger.info("Safety stock policy: %s | quantiles: %s",
-                PIPELINE_CONFIG['safety_stock_policy'], PIPELINE_CONFIG['quantiles'])
+    if args.coverage_days is not None:
+        PIPELINE_CONFIG['coverage_days'] = args.coverage_days
+    logger.info("Safety stock policy: %s | coverage_days: %s | quantiles: %s",
+                PIPELINE_CONFIG['safety_stock_policy'],
+                PIPELINE_CONFIG.get('coverage_days', 0),
+                PIPELINE_CONFIG['quantiles'])
   
     logger.info(
         "Executing Pipeline: Mode='%s' | Model='%s' | Type='%s' | Backtest Windows= '%d'",
@@ -321,6 +337,9 @@ def main():
                 lead_time_days= lead_time,
                 review_period_days= review_period)
 
+            test_preds[winner]['model_name'] = winner
+            populate_predictions(df=test_preds[winner],store_id='CA_1')
+            populate_actuals(df=test_preds['seasonal_naive'])
     
     elif run_mode == "backtest":
 

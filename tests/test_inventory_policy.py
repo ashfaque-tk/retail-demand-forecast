@@ -152,3 +152,35 @@ def test_safety_stock_calculation():
     
     assert isinstance(safety_stock, pd.Series)
     assert len(safety_stock) == 2
+
+
+def test_coverage_policy_orders_up_to_extended_horizon():
+    """Coverage order-up-to covers risk period plus coverage days minus stock."""
+    items = ["SKU_1"]
+    mock_forecasts = pd.DataFrame(columns=['date', 'item_id', 'sales', 'sales_pred'])
+
+    policy = InventoryPolicy(
+        inventory=pd.Series([5.0], index=items),
+        forecasts=mock_forecasts,
+        lead_time=2,
+        review_period=3,
+        coverage_days=4,
+        safety_stock_type="coverage",
+    )
+
+    dates = pd.date_range("2026-12-01", periods=9, freq="D")
+    forecasted = pd.DataFrame({
+        "date": dates,
+        "item_id": "SKU_1",
+        "sales_pred": 10.0,
+    })
+
+    order_qty, order_up_to = policy.generate_order(
+        forecasted_risk_period=forecasted,
+        on_hand_current=pd.Series([5.0], index=items),
+        on_order=pd.Series([0.0], index=items),
+    )
+
+    # Risk period 5 days (50) + coverage 4 days (40) = 90; stock 5 -> order 85.
+    assert order_up_to.loc["SKU_1"] == pytest.approx(90.0)
+    assert order_qty.loc["SKU_1"] == pytest.approx(85.0)

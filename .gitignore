@@ -8,7 +8,14 @@ wheels/
 data/
 # Virtual environments
 .venv
-data/
+# Ignore data folder contents by default
+data/*
+
+# Allow processed folder and specific files needed for Streamlit deployment
+!data/processed/
+!data/processed/test_filtered_ca1.parquet
+!data/processed/train_filtered_ca1.parquet
+!data/processed/updated_calendar.parquet
 
 # --- ML Models & Artifacts ---
 *.pkl
@@ -16,6 +23,7 @@ data/
 models/
 
 # --- Logs & Temporary Files ---
+*.tavily
 *.log
 CACHED
 exporting
@@ -25,3 +33,10 @@ writing
 naming
 
 implementation_review.html
+reading_list.html
+supchains_workplan.html
+2601.18919v1.pdf
+
+# Run artefacts: regenerate with run_pipeline.py, never commit
+results/tests/
+results/holdout_test_results_*.html

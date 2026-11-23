@@ -43,11 +43,9 @@ from config import PIPELINE_CONFIG
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASELINES: tuple[str, ...] = (
-    "seasonal_naive",
+    # "seasonal_naive",
     "simple_moving_average",
-    "seasonal_moving_average",
-    "croston",
-    "croston_sba"
+    # "seasonal_moving_average",
 )
 
 FVA_METRICS: tuple[str, ...] = (
@@ -158,6 +156,7 @@ class BacktestEngine:
         feature_names: list[str] | None = None,
         lead_time_days: int = 11,
         review_period_days: int = 7,
+        coverage_days: int = 0,
         holding_cost_rate: float = 0.02,
         stockout_rate : float = 1.0,
         min_history_days: int = 100,
@@ -166,7 +165,7 @@ class BacktestEngine:
         baselines : Sequence[str] | Mapping[str, dict[str, Any]] | None = None,
         fva_reference : str | None = None,
         baseline_quantiles : list[float] | None = None,
-        safety_stock_policy : str = 'rmse',
+        safety_stock_policy : str = 'coverage',
     ) -> None:
         self.model_name = model_name
         self.forecast_type = forecast_type.lower()
@@ -176,17 +175,20 @@ class BacktestEngine:
         self.step_size_days = step_size_days
         self.categorical_cols = categorical_cols or ["item_id",  "dept_id"]
         self.feature_names = feature_names or []
+        if coverage_days < 0:
+            raise ValueError(f"coverage_days must be non-negative, got {coverage_days!r}")
         self.lead_time_days = lead_time_days
         self.review_period_days = review_period_days
+        self.coverage_days = coverage_days
         self.holding_cost_rate = holding_cost_rate
         self.min_history_days = min_history_days
         self.max_windows = max_windows
         self.use_log_transform = use_log_transform
         self.stockout_rate = stockout_rate
         self.baseline_quantiles = baseline_quantiles
-        if safety_stock_policy not in ("rmse", "quantile"):
+        if safety_stock_policy not in ("rmse", "quantile", "coverage"):
             raise ValueError(
-                f"safety_stock_policy must be 'rmse' or 'quantile', "
+                f"safety_stock_policy must be 'rmse', 'quantile', or 'coverage', "
                 f"got {safety_stock_policy!r}"
             )
         if safety_stock_policy == "quantile" and not baseline_quantiles:
@@ -222,7 +224,7 @@ class BacktestEngine:
             use_log_transform=self.use_log_transform,
             categorical_cols=self.categorical_cols,
         )
-        self.forecaster = Forecaster(model=self.model, feature_builder=self.feature_builder,
+        self.forecaster = Forecaster(feature_builder=self.feature_builder,
                                      original_features=self.feature_names,forecast_type=self.forecast_type)
 
     def _resolve_baselines(
@@ -356,6 +358,7 @@ class BacktestEngine:
         forecasted_demands = self.forecaster.forecast(
             train_df=train_wnd,
             test_df=eval_df,
+            model=self.model,
         )
 
         metrics_ml = MetricsCalculator(
@@ -506,6 +509,7 @@ class BacktestEngine:
                 forecasts=forecasts_model,
                 lead_time=self.lead_time_days,
                 review_period=self.review_period_days,
+                coverage_days=self.coverage_days,
                 daily_unit_holding_cost=self.holding_cost_rate,
                 stockout_cost=self.stockout_rate,
                 safety_stock_type=self.safety_stock_policy

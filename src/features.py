@@ -73,52 +73,59 @@ class FeatureBuilder():
 
     
     # ---- Intermittent, lumpy, erratic sku profile -------
-    def build_sku_demand_profile(self,df:pd.DataFrame)->pd.DataFrame:
-        '''one row per item-id:ADI, modified ADI, CV^2, lumpiness , pattern class.
-        Must be called on the  train slice only (before eval sales exist)'''
-
-        grp = df.groupby(self.id_col,observed=True)[self.target_col]
-        prof = grp.agg(sku_obs_days='count',sku_mean_demand='mean')
+    def build_sku_demand_profile(self,
+                                       df: pd.DataFrame, 
+                                    adi_threshold: float = 1.32, cv2_threshold: float = 0.49) -> pd.DataFrame:
+        """Vectorized SBC demand profiler with correct Syntetos-Boylan taxonomy."""
+        grp = df.groupby(self.id_col, observed=True)[self.target_col]
+        prof = grp.agg(sku_obs_days='count', sku_mean_demand='mean')
+        
         nz = df[self.target_col].gt(0)
         nz_grp = [df[self.id_col]]
 
-        nz_cnt = nz.groupby(nz_grp,observed=True).sum()
-        nz_sum = df[self.target_col].where(nz).groupby(nz_grp,observed=True).sum()
-        nz_sq = df[self.target_col].pow(2).where(nz).groupby(nz_grp,observed=True).sum()
+        nz_cnt = nz.groupby(nz_grp, observed=True).sum()
+        nz_sum = df[self.target_col].where(nz).groupby(nz_grp, observed=True).sum()
+        nz_sq = df[self.target_col].pow(2).where(nz).groupby(nz_grp, observed=True).sum()
 
         prof['sku_nonzero_days'] = nz_cnt
-        prof['sku_zero_days'] = prof['sku_obs_days']- nz_cnt
-        prof['sku_active_rate'] = nz_cnt/prof['sku_obs_days']
+        prof['sku_zero_days'] = prof['sku_obs_days'] - nz_cnt
+        prof['sku_active_rate'] = nz_cnt / prof['sku_obs_days']
 
-        # ADI = mean number of days between two non-zero demand periods
-        adi  = prof['sku_obs_days']/nz_cnt.replace(0,np.nan)
+        # ADI & Small-sample corrected ADI (ADIDA)
+        adi = prof['sku_obs_days'] / nz_cnt.replace(0, np.nan)
         prof['sku_adi'] = adi 
-        prof['sku_adida'] = adi.pow(2)/(adi+1)#small-sample corrected ADI 
+        prof['sku_adida'] = adi.pow(2) / (adi + 1)
 
-        # CV^2 over the non-zero demand sizes only (lumpiness of size, not of timing)
-        nz_mean = nz_sum/nz_cnt.replace(0,np.nan)
-        nz_var = (nz_sq/nz_cnt) - nz_mean.pow(2)
-        prof['sku_cv2'] = (nz_var/nz_mean.pow(2)).clip(lower=0)
+        # CV^2 over non-zero demand sizes (population variance matching Function 1)
+        nz_mean = nz_sum / nz_cnt.replace(0, np.nan)
+        nz_var = (nz_sq / nz_cnt) - nz_mean.pow(2)
+        prof['sku_cv2'] = (nz_var / nz_mean.pow(2)).clip(lower=0)
 
-        #  Syntetos-Boylan lumpiness index , p=sqrt(ADI)
-        prof['sku_lumpiness'] = prof['sku_cv2']*prof['sku_adi'].pow(0.5)
+        # Syntetos-Boylan lumpiness index
+        prof['sku_lumpiness'] = prof['sku_cv2'] * prof['sku_adi'].pow(0.5)
 
-        # longest run of consecutive zero -demand days
+        # Longest run of consecutive zero-demand days
         z = (~nz).astype('int8')
-        run_id = z.groupby(nz_grp,observed=True).cumsum()
-        zero_run = z.groupby(nz_grp+[run_id],observed=True).transform('sum')
+        run_id = z.groupby(nz_grp, observed=True).cumsum()
+        zero_run = z.groupby(nz_grp + [run_id], observed=True).transform('sum')
+        prof['sku_max_zero_run'] = zero_run.groupby(nz_grp, observed=True).max()
 
-        prof['sku_max_zero_run'] = zero_run.groupby(nz_grp,observed=True).max()
+        # --- CORRECTED STANDARD SBC TAXONOMY ---
+        # 0: Smooth, 1: Erratic, 2: Intermittent, 3: Lumpy
+        smooth = (prof['sku_adi'] < adi_threshold) & (prof['sku_cv2'] < cv2_threshold)
+        erratic = (prof['sku_adi'] < adi_threshold) & (prof['sku_cv2'] >= cv2_threshold)
+        intermittent = (prof['sku_adi'] >= adi_threshold) & (prof['sku_cv2'] < cv2_threshold)
+        lumpy = (prof['sku_adi'] >= adi_threshold) & (prof['sku_cv2'] >= cv2_threshold)
 
-        # 0 smooth, 1 lumpy, 2 intermittent, 3 erratic 
-        smooth = (prof['sku_adi'] < self.ADI_THRESHOLD) & (prof['sku_cv2']<self.CV2_THRESHOLD)
-        lumpy = (prof['sku_adi'] < self.ADI_THRESHOLD) & (prof['sku_cv2']>=self.CV2_THRESHOLD)
-        inter = (prof['sku_adi'] >= self.ADI_THRESHOLD) & (prof['sku_cv2']<self.CV2_THRESHOLD)
-
-        prof['sku_pattern'] = np.select([smooth,lumpy,inter],[0,1,2],default=3)
+        prof['sku_pattern'] = np.select([smooth, erratic, intermittent, lumpy], [0, 1, 2, 3], default=3)
+        prof['demand_type'] = np.select([smooth, erratic, intermittent, lumpy], 
+                                        ['smooth', 'erratic', 'intermittent', 'lumpy'], default='lumpy')
+        
+        prof['sku_is_smooth'] = smooth.astype('int8')
+        prof['sku_is_erratic'] = erratic.astype('int8')
+        prof['sku_is_intermittent'] = intermittent.astype('int8')
         prof['sku_is_lumpy'] = lumpy.astype('int8')
-        prof['sku_is_erratic'] = (~smooth & ~lumpy & ~inter).astype('int8')
-
+        prof['demand_type'] = prof['demand_type'].astype('category')
         return prof.reset_index()
     # ---------- unified lags & rolling features ----------
     def add_lags_and_rollings(
