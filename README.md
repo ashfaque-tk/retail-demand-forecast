@@ -219,53 +219,42 @@ The selected candidate was evaluated on a separate, unseen holdout period (1 win
 
 **Current deployment candidate: Quantile LightGBM Direct (1-year training) + `quantile` safety-stock policy**
 
+### Baseline choice
+
+All results are compared against one fixed baseline: **Simple Moving Average (SMA) with the `rmse` safety-stock policy.**
+
+* SMA produces no quantiles, so running it through a probabilistic policy would mean imposing an assumed distribution on it. That would test the assumption, not the forecast.
+* SMA + `rmse` is also SMA's **lowest-cost** configuration in the holdout ($17,615.54, versus $17,758.96 under `coverage`). Using a baseline at its best is the stricter test.
+* The probabilistic policies are applied only to LightGBM, which produces real quantile forecasts.
+
 ### Forecast accuracy
 
-Identical under both policies; the policy only changes inventory decisions.
+Point-forecast metrics come from the same model and are identical under every safety-stock policy. Model training differs slightly between v1 and v2, so both are shown.
 
-| Metric | LGBM Direct | Simple Moving Average | LGBM improvement |
-|---|---:|---:|---:|
-| WRMSSE | **0.8349** | 0.9378 | 11.0% |
-| WAPE | **0.7852** | 0.8483 | 7.4% |
-| MAE | **1.0830** | 1.1700 | 7.4% |
-| BIAS% | -2.59% | 0.01% | — |
-| Cumulative MAE | **5.3991** | 5.8985 | 8.5% |
-| Cumulative bias | -0.3333 | 0.0012 | — |
+| Metric | SMA (baseline) | LGBM v1 (point) | LGBM v2 (quantile model) | v2 vs SMA |
+|---|---:|---:|---:|---:|
+| WRMSSE | 0.9378 | 0.8435 | **0.8349** | 11.0% lower |
+| WAPE | 0.8483 | 0.7889 | **0.7852** | 7.4% lower |
+| MAE | 1.1700 | 1.0880 | **1.0830** | 7.4% lower |
+| BIAS% | 0.01% | -2.61% | -2.59% | — |
+| Cumulative MAE | 5.8985 | 5.4316 | **5.3991** | 8.5% lower |
+| Cumulative bias | 0.0012 | -0.3360 | -0.3333 | — |
 
-### Inventory cost by safety-stock policy
+### Inventory cost and FVA (baseline: SMA + `rmse`)
 
-| Policy | Model | Holding cost | Stockout cost | Total cost | Savings vs SMA | Cost FVA |
+| Model | Safety-stock policy | Holding cost | Stockout cost | Total cost | Savings vs baseline | Cost FVA |
 |---|---|---:|---:|---:|---:|---:|
-| `quantile` | **LGBM Direct** | $14,428.34 | $1,490.09 | **$15,918.42** | **$3,763.48** | **19.12%** |
-| `quantile` | Simple Moving Average | $18,707.83 | $974.07 | $19,681.90 | — | — |
-| `coverage` | LGBM Direct | $15,208.70 | $1,441.62 | $16,650.32 | $1,108.64 | 6.24% |
-| `coverage` | Simple Moving Average | $16,327.55 | $1,431.41 | $17,758.96 | — | — |
+| SMA (baseline) | `rmse` | $16,493.31 | $1,122.23 | $17,615.54 | — | — |
+| LGBM Direct (v1) | `rmse` | $15,251.41 | $1,227.88 | $16,479.29 | $1,136.25 | 6.45% |
+| LGBM Direct | `coverage` | $15,208.70 | $1,441.62 | $16,650.32 | $965.22 | 5.48% |
+| **LGBM Direct** | **`quantile`** | **$14,428.34** | $1,490.09 | **$15,918.42** | **$1,697.12** | **9.63%** |
 
 ### Business impact
 
-* **The probabilistic setup beats the v1 point + RMSE setup.** Total cost fell from $16,479 to **$15,918** (−$561, −3.4%), with WRMSSE improving from 0.8435 to 0.8349.
-* **19.1% lower cost than the moving-average baseline** under the `quantile` policy.
-* **Coverage calibration did not pay off for LGBM.** Versus the `quantile` policy it added ~$780 in holding cost to avoid ~$48 in stockouts (net +$732). It helped the moving-average baseline much more (−$1,923), which suggests LGBM's quantiles were already reasonably calibrated while the baseline's were not.
-* **Holding cost still dominates** (~91% of LGBM's total, down from ~97% in v1). Sparse long-tail SKUs remain over-stocked.
-
-### v1 reference (point forecast + RMSE safety stock)
-
-| Metric | LGBM Direct (v1) |
-|---|---:|
-| MAE | 1.0880 |
-| BIAS% | -2.61% |
-| WRMSSE | 0.8435 |
-| Cumulative MAE | 5.4316 |
-| Cumulative bias | -0.336 |
-| Total inventory cost | $16,479 |
-
-| Comparison (v1) | Cost difference | FVA |
-|---|---:|---:|
-| Moving Average | $1,136 lower | 6.45% |
-| Seasonal Moving Average | $1,601 lower | 8.86% |
-| Seasonal Naive | $2,144 lower | 11.52% |
-| Croston SBA | $2,220 lower | 11.88% |
-| Croston | $3,085 lower | 15.77% |
+* **The probabilistic setup gives the largest saving:** 9.63% ($1,697) below the SMA baseline, against 6.45% for the v1 point forecast with RMSE safety stock.
+* **Moving from RMSE to quantile safety stock is worth $561 (3.4%)** on the same LightGBM model. Almost all of the gain comes from lower holding cost (−$823), at the price of slightly higher stockout cost (+$262). Each unit of holding avoided saves more than the extra stockouts cost, which is what the newsvendor ratio predicts at a ≈83% target.
+* **Coverage calibration did not pay off.** Versus the `quantile` policy it added ~$780 in holding cost to avoid ~$48 in stockouts, and it came out behind even the v1 RMSE policy. Better-calibrated intervals are not automatically cost-optimal.
+* **Holding cost still dominates** (~91% of total for the quantile policy, 92.5% for v1, 93.6% for the baseline). Sparse long-tail SKUs remain over-stocked by every approach.
 
 The holdout is a single window. It is the current evidence for the deployment decision, not a guarantee of production performance.
 
@@ -341,9 +330,9 @@ The API is a read-only layer over database snapshots written by the offline fore
 ## Diagnostic Findings
 
 * **Daily quantiles must not be summed.** Summing daily quantiles overstates risk-period demand; simulating the total is what made quantile-based safety stock usable.
-* **Probabilistic beats point + RMSE** by 3.4% on total cost, because uncertainty is learned per SKU and context instead of applied as one symmetric buffer.
+* **Probabilistic beats point + RMSE:** 9.63% vs 6.45% cost FVA over the SMA baseline (3.4% lower cost on the same model), because uncertainty is learned per SKU and context instead of applied as one symmetric buffer.
 * **Calibration is not the same as cost-optimality.** Better coverage increased LGBM's cost; the service level should follow the cost ratio (≈83%).
-* **Holding cost dominates** (~91%), driven by over-stocking long-tail intermittent SKUs.
+* **Holding cost dominates** (~91–94% across all configurations), driven by over-stocking long-tail intermittent SKUs.
 
 ---
 
