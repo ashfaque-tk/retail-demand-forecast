@@ -17,13 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 class InventoryPolicy:
-
     def __init__(
         self,
         inventory: pd.Series,
         forecasts: pd.DataFrame,
         lead_time: int = 4,
         review_period: int = 7,
+        coverage_days: int = 0,
         daily_unit_holding_cost: float = 0.2,
         stockout_cost: float = 1.0,
         safety_stock_type: str = 'rmse',
@@ -33,14 +33,23 @@ class InventoryPolicy:
         self.forecasts_df['date'] = pd.to_datetime(self.forecasts_df['date'])
         self.forecasts_df['item_id'] = self.forecasts_df['item_id'].astype(str)
 
+        if coverage_days < 0:
+            raise ValueError("coverage_days must be non-negative.")
+
         self.lead_time = lead_time
         self.review_period = review_period
+        self.coverage_days = coverage_days
         self.risk_period = lead_time + review_period
 
         self.daily_unit_holding_cost = daily_unit_holding_cost 
         self.stockout_penalty = stockout_cost
         self.target_service_level = 1 / (1 + (daily_unit_holding_cost / stockout_cost))
         self.safety_stock_type  = safety_stock_type
+
+        if safety_stock_type not in ("rmse", "quantile", "coverage"):
+            raise ValueError(
+                f"Unknown safety stock calculation type: {safety_stock_type}"
+            )
         if inventory is None:
             raise ValueError("Inventory not initialized.")
 
@@ -53,6 +62,7 @@ class InventoryPolicy:
         # Align index type to string
         self.on_hand = inventory.copy()
         self.on_hand.index = self.on_hand.index.astype(str)
+        self._last_safety_stock = pd.Series(0.0, index=self.on_hand.index)
         self.transit_pipeline: list[tuple[pd.Timestamp, pd.Series]] = []  
         self.simulation_logs = []  
 
@@ -64,6 +74,24 @@ class InventoryPolicy:
         ``int(level * 100)`` -- so both paths agree on the spelling.
         """
         return f"q{int(self.target_service_level * 100)}"
+
+    def _split_horizon(
+        self, forecasts: pd.DataFrame
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Splits a forecast slice into the risk window and coverage window."""
+        df = forecasts.copy()
+        df["date"] = pd.to_datetime(df["date"])
+        df["item_id"] = df["item_id"].astype(str)
+
+        start = df["date"].min()
+        risk_end = start + pd.Timedelta(days=self.risk_period - 1)
+        coverage_end = risk_end + pd.Timedelta(days=self.coverage_days)
+
+        risk_window = df[df["date"] <= risk_end]
+        coverage_window = df[
+            (df["date"] > risk_end) & (df["date"] <= coverage_end)
+        ]
+        return risk_window, coverage_window
 
     def _safety_stock(self, current_forecasts: pd.DataFrame | None = None) -> pd.Series:
         """Calculates per-item safety stock levels returning a pd.Series indexed by item_id.
@@ -90,39 +118,55 @@ class InventoryPolicy:
           
             ss = z_score * latest_error
             
-        elif self.safety_stock_type== "quantile":
-            # Empirical approach: (Sum of tau-day quantile forecast) - (Sum of tau-day mean forecast)
-            # Slices forecasted_demand over the risk period (horizon tau)
+        elif self.safety_stock_type == "quantile":
+            # Empirical approach using quantile forecasts
             if current_forecasts is None:
                 raise ValueError(
                     "the quantile safety-stock path needs current_forecasts; "
                     "pass a forecast slice or use type='rmse'."
                 )
-            df_horizon = current_forecasts.copy()
-            df_horizon["item_id"] = df_horizon["item_id"].astype(str)
+            df_horizon, _ = self._split_horizon(current_forecasts)
+            q_cols = [c for c in df_horizon.columns if c.startswith('q')]
+            if not q_cols:
+                risk_window, _ = self._split_horizon(current_forecasts)
+                risk_demand_item = risk_window.groupby("item_id", observed=True)["sales_pred"].sum()
+                ss = pd.Series(0.0, index=risk_demand_item.index)
+            else:
+                q_levels = [int(c[1:]) / 100 for c in q_cols]
+                ss_dict = {}
+                for item_id, item_df in df_horizon.groupby("item_id", observed=True):
+                    q_preds = item_df[q_cols].to_numpy()[:self.risk_period, :]
+                    if q_preds.size == 0:
+                        continue
+                    n_sims = 5000
+                    rng = np.random.RandomState(42)
+                    u_draws = rng.uniform(0, 1, size=(n_sims, min(self.risk_period, q_preds.shape[0])))
+                    simulated_ltd = np.zeros(n_sims)
+                    for t in range(min(self.risk_period, q_preds.shape[0])):
+                        daily_demand = np.interp(u_draws[:, t], q_levels, q_preds[t, :])
+                        simulated_ltd += np.clip(daily_demand, 0, None)
+                    target_s = np.quantile(simulated_ltd, q=self.target_service_level)
+                    point_sum = item_df["sales_pred"].sum() if "sales_pred" in item_df.columns else 0.0
+                    ss_dict[item_id] = max(0.0, target_s - point_sum)
+                ss = pd.Series(ss_dict)
 
-            # Same quantile the cost inputs imply, so this column cannot drift
-            # out of step with the level the forecaster was asked to produce.
-            column = self.service_quantile_column
-            if column not in df_horizon.columns:
-                raise KeyError(
-                    f"the quantile safety-stock path needs a '{column}' column, "
-                    f"which the cost inputs imply (p/(p+h) = "
-                    f"{self.target_service_level:.4f}). Available: "
-                    f"{[c for c in df_horizon.columns if c.startswith('q')]}. "
-                    f"Check PIPELINE_CONFIG['quantiles'] matches the level here."
+        elif self.safety_stock_type == "coverage":
+            # Coverage policy: hold extra forecast demand beyond the risk period.
+            if current_forecasts is None:
+                raise ValueError(
+                    "the coverage safety-stock path needs current_forecasts; "
+                    "pass a forecast slice or use type='rmse'."
                 )
-
-            # Aggregate total expected demand and high-service quantile demand over the lead time window
-            grouped = df_horizon.groupby("item_id", observed=True)
-            cum_quantile = grouped[column].sum()
-            cum_mean = grouped["sales_pred"].sum()
-
-            # Buffer is the spread between target percentile and point estimate
-            ss = cum_quantile - cum_mean
+            _, coverage_window = self._split_horizon(current_forecasts)
+            if coverage_window.empty:
+                ss = pd.Series(dtype=float)
+            else:
+                ss = coverage_window.groupby("item_id", observed=True)["sales_pred"].sum()
 
         else:
-            raise ValueError(f"Unknown safety stock calculation type: {type}")
+            raise ValueError(
+                f"Unknown safety stock calculation type: {self.safety_stock_type}"
+            )
 
         # Safety stock cannot be negative
         return ss.clip(lower=0.0)
@@ -140,9 +184,11 @@ class InventoryPolicy:
     ) -> tuple[pd.Series, pd.Series]:
         
         forecasted_risk_period['item_id'] = forecasted_risk_period['item_id'].astype(str)
-        risk_demand_item = forecasted_risk_period.groupby("item_id", observed=True)["sales_pred"].sum()
+        risk_window, _ = self._split_horizon(forecasted_risk_period)
+        risk_demand_item = risk_window.groupby("item_id", observed=True)["sales_pred"].sum()
 
         safety_stock = self._safety_stock(current_forecasts=forecasted_risk_period)
+        self._last_safety_stock = safety_stock
         order_up_to = risk_demand_item.add(safety_stock, fill_value=0.0)
 
         inventory_position = (
@@ -205,8 +251,11 @@ class InventoryPolicy:
                 if not forecasts_prior_review.empty:
                     self.update_oos_errors(forecasts_prior_review)
 
-                # Fix: Look ahead dynamically from current day through (day + risk_period - 1)
-                risk_period_end = day + pd.Timedelta(days=self.risk_period - 1)
+                # Look ahead through the risk period plus any coverage buffer.
+                forecast_horizon = self.risk_period
+                if self.safety_stock_type == "coverage":
+                    forecast_horizon += self.coverage_days
+                risk_period_end = day + pd.Timedelta(days=forecast_horizon - 1)
                 risk_period_forecast = forecasted_demand[
                     forecasted_demand['date'].between(day, risk_period_end)
                 ].copy()
@@ -251,7 +300,9 @@ class InventoryPolicy:
                 'on_hand': self.on_hand.values,
                 'arriving_qty': arriving_qty.reindex(self.on_hand.index, fill_value=0.0).values,
                 'actual_sales': sales_on_day.values,
-                'safety_stock': self._safety_stock(current_forecasts=forecasted_demand),
+                'safety_stock': self._last_safety_stock.reindex(
+                    self.on_hand.index, fill_value=0.0
+                ).values,
                 'lost_sales': lost_sales.values,
                 'order_qty': order_qty.reindex(self.on_hand.index, fill_value=0.0).values,
                 'order_up_to': order_up_to.reindex(self.on_hand.index, fill_value=0.0).values,
